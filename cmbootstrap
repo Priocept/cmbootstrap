@@ -1,0 +1,1694 @@
+#!/bin/bash
+
+# --------------------------------------------------------------------------------
+##
+## Configuration management bootstrap script.
+##
+## Version 1.2.69.
+##
+## Copyright Priocept Ltd.  All rights reserved.
+##
+# --------------------------------------------------------------------------------
+
+
+# configuration constants
+default_vcs_revision="HEAD"
+default_tmp_dir="/tmp"
+default_svn_version="subversion"
+default_git_version="git"
+default_ansible_version="ansible"
+gce_metadata_url="http://metadata/computeMetadata/v1/instance"
+gce_metadata_header='Metadata-Flavor: Google'
+amazon_linux_svn_17_sub_version=".22-1"
+amazon_linux_svn_17_base_url="http://opensource.wandisco.com/centos/6/svn-1.7/RPMS/x86_64"
+amazon_ec2_metadata_url="http://169.254.169.254/latest/user-data"
+amazon_ec2_metadata_cmd="/opt/aws/bin/ec2-metadata"
+ansible_main_file="main.yml"
+ansible_init_file="init.yml"
+ansible_config_file="config.yml"
+
+
+# general configuration
+# --------------------------------------------------------------------------------
+function configGeneral() {
+
+    local _verbose_arg="-"
+    local _compact_arg="-c"
+    local _escape_arg="-e"
+    local _arg1
+
+    # process cmbootstrap compacting/escaping arguments
+    _arg1=${args[0]}
+    if [ "$_arg1" = "$_compact_arg" ]; then
+        createCompact
+        exit 0
+    elif [ "$_arg1" = "$_escape_arg" ]; then
+        createEscaped
+        exit 0
+    # process verbose output argument
+    elif [ "$_arg1" = "$_verbose_arg" ]; then
+        verbose_mode=1
+    elif [ ! -z "$_arg1" ]; then
+        echo "Invalid argument."
+        exit 1
+    else
+        verbose_mode=0
+    fi
+
+    # pre-declaration of global variables
+    configValue=''
+    metaDataValue=''
+    getAmazonEC2Tag_EnvironmentError=''
+    getAmazonEC2Tag_Error=''
+    ec2TagValue=''
+
+}
+
+
+# path configuration
+# --------------------------------------------------------------------------------
+function configPath() {
+
+    script_dir=`dirname $0`
+    cmbootstrap_dir=~/.cmbootstrap
+    cmbootstrap_config_file='cmbootstrap.cfg'
+    cmbootstrap_config_path="$script_dir/$cmbootstrap_config_file"
+    timestamp=`date +%Y%m%d%H%M%S`
+    cmbootstrap_log_path="$cmbootstrap_dir/cmbootstrap.log.$timestamp"
+    cmbootstrap_err_path="$cmbootstrap_dir/cmbootstrap.err.$timestamp"
+    cmbootstrap_old_dir="$cmbootstrap_dir/_old"
+    vcs_local_path="$cmbootstrap_dir/vcs"
+    success_path="$cmbootstrap_dir/.success"
+    yum_log_path="$cmbootstrap_dir/yum.log.$timestamp"
+    yum_err_path="$cmbootstrap_dir/yum.err.$timestamp"
+
+}
+
+
+# initialization
+# --------------------------------------------------------------------------------
+function init() {
+
+    # prepare directory structure
+    makeDirectory "$cmbootstrap_dir"
+    makeDirectory "$cmbootstrap_old_dir"
+    # move old logs
+    mv -f "$cmbootstrap_dir"/*.log.* "$cmbootstrap_old_dir" 2>/dev/null
+    mv -f "$cmbootstrap_dir"/*.err.* "$cmbootstrap_old_dir" 2>/dev/null
+    rm -rf "$vcs_local_path"
+    makeDirectory "$vcs_local_path"
+
+    logInfo 'Directory structure created.'
+
+    # Ansible requires that $HOME is defined
+    HOME=~
+    export HOME
+
+}
+
+
+# retrieve configuration management metadata
+# --------------------------------------------------------------------------------
+function retrieveMetaData() {
+
+    local _cm_disabled
+    local _mandatory
+    local _vcs_revision
+    local _proxy_auth
+    local _http_proxy
+    local _https_proxy
+
+    # initialize platform detection variables
+    CM_GOOGLE_COMPUTE_ENGINE=''
+    CM_AMAZON_EC2=''
+    CM_AMAZON_LINUX=''
+    CM_VMWARE=''
+    CM_VIRTUALBOX=''
+
+    # first check for disabled flag and terminate
+    # early if configuration management is disabled
+    getMetaData 'cm-disabled'
+    _cm_disabled="$metaDataValue"
+    if [ "$_cm_disabled" = "true" ]; then
+        logInfo 'Configuration management disabled.'
+        exit 0;
+    fi
+
+    # retrieve config file based metadata if present
+    if [ -f "$cmbootstrap_config_path" ]; then
+        readConfigFileValue 'cm-vcs-repo-base'
+        CM_VCS_REPO_BASE="$configValue"
+        readConfigFileValue 'cm-vcs-repo-base-path'
+        CM_VCS_REPO_BASE_PATH="$configValue"
+        readConfigFileValue 'cm-vcs-repo-type'
+        CM_VCS_REPO_TYPE="$configValue"
+        readConfigFileValue 'cm-vcs-accept-invalid-ssl'
+        CM_VCS_ACCEPT_INVALID_SSL="$configValue"
+        readConfigFileValue 'cm-vcs-svn-version'
+        CM_VCS_SVN_VERSION="$configValue"
+        readConfigFileValue 'cm-vcs-git-version'
+        CM_VCS_GIT_VERSION="$configValue"
+        readConfigFileValue 'cm-ansible-version'
+        CM_ANSIBLE_VERSION="$configValue"
+        readConfigFileValue 'cm-yum-proxy'
+        CM_YUM_PROXY="$configValue"
+        readConfigFileValue 'cm-yum-proxy-username'
+        CM_YUM_PROXY_USERNAME="$configValue"
+        readConfigFileValue 'cm-yum-proxy-password'
+        CM_YUM_PROXY_PASSWORD="$configValue"
+        readConfigFileValue 'cm-http-proxy'
+        CM_HTTP_PROXY="$configValue"
+        readConfigFileValue 'cm-http-proxy-username'
+        CM_HTTP_PROXY_USERNAME="$configValue"
+        readConfigFileValue 'cm-http-proxy-password'
+        CM_HTTP_PROXY_PASSWORD="$configValue"
+        readConfigFileValue 'cm-https-proxy'
+        CM_HTTPS_PROXY="$configValue"
+        readConfigFileValue 'cm-tmp-dir'
+        CM_TMP_DIR="$configValue"
+    else
+        logInfo 'Configuration file not found.'
+    fi
+
+    # none of the metadata is mandatory if using
+    # local configuration management files
+    checkIfLocalCmFilesExist
+    if [ "$?" -eq 1 ]; then
+        _mandatory=0
+    else
+        _mandatory=1
+    fi
+
+    # various metadata is only retrieved if no file based configuration,
+    # this allows a config file to "lock down" the configuration
+    if [ -z "$CM_VCS_REPO_BASE" ]; then
+        getMetaData 'cm-vcs-repo-base' _mandatory
+        CM_VCS_REPO_BASE="$metaDataValue"
+    fi
+    if [ -z "$CM_VCS_REPO_BASE" ]; then
+        fatalError 'Metadata cm-vcs-repo-base not defined, terminating.' 11
+    fi
+    if [ -z "$CM_VCS_REPO_BASE_PATH" ]; then
+        getMetaData 'cm-vcs-base-path'
+        CM_VCS_REPO_BASE_PATH="$metaDataValue"
+    fi
+    if [ -z "$CM_VCS_REPO_TYPE" ]; then
+        getMetaData 'cm-vcs-repo-type' _mandatory
+        CM_VCS_REPO_TYPE="$metaDataValue"
+    fi
+    if [ -z "$CM_VCS_REPO_TYPE" ]; then
+        fatalError 'Metadata cm-vcs-repo-type not defined, terminating.' 12
+    fi
+    if [ -z "$CM_VCS_ACCEPT_INVALID_SSL" ]; then
+        getMetaData 'cm-vcs-accept-invalid-ssl'
+        CM_VCS_ACCEPT_INVALID_SSL="$metaDataValue"
+    fi
+    if [ -z "$CM_VCS_SVN_VERSION" ]; then
+        getMetaData 'cm-vcs-svn-version'
+        CM_VCS_SVN_VERSION="$metaDataValue"
+    fi
+    if [ -z "$CM_VCS_GIT_VERSION" ]; then
+        getMetaData 'cm-vcs-git-version'
+        CM_VCS_GIT_VERSION="$metaDataValue"
+    fi
+    if [ -z "$CM_ANSIBLE_VERSION" ]; then
+        getMetaData 'cm-ansible-version'
+        CM_ANSIBLE_VERSION="$metaDataValue"
+    fi
+    if [ -z "$CM_YUM_PROXY" ]; then
+        getMetaData 'cm-yum-proxy'
+        CM_YUM_PROXY="$metaDataValue"
+    fi
+    if [ -z "$CM_YUM_PROXY_USERNAME" ]; then
+        getMetaData 'cm-yum-proxy-username'
+        CM_YUM_PROXY_USERNAME="$metaDataValue"
+    fi
+    if [ -z "$CM_YUM_PROXY_PASSWORD" ]; then
+        getMetaData 'cm-yum-proxy-password'
+        CM_YUM_PROXY_PASSWORD="$metaDataValue"
+    fi
+    if [ -z "$CM_HTTP_PROXY" ]; then
+        getMetaData 'cm-http-proxy'
+        CM_HTTP_PROXY="$metaDataValue"
+    fi
+    if [ -z "$CM_HTTP_PROXY_USERNAME" ]; then
+        getMetaData 'cm-http-proxy-username'
+        CM_HTTP_PROXY_USERNAME="$metaDataValue"
+    fi
+    if [ -z "$CM_HTTP_PROXY_PASSWORD" ]; then
+        getMetaData 'cm-http-proxy-password'
+        CM_HTTP_PROXY_PASSWORD="$metaDataValue"
+    fi
+    if [ -z "$CM_HTTPS_PROXY" ]; then
+        getMetaData 'cm-https-proxy'
+        CM_HTTPS_PROXY="$metaDataValue"
+    fi
+    if [ -z "$CM_TMP_DIR" ]; then
+        getMetaData 'cm-tmp-dir'
+        CM_TMP_DIR="$metaDataValue"
+    fi
+    getMetaData 'cm-vcs-username'
+    CM_VCS_USERNAME="$metaDataValue"
+    if [ -z "$CM_VCS_USERNAME" ]; then
+        getMetaData 'cm-vcs-password'
+    else
+        # version control password is mandatory with username
+        getMetaData 'cm-vcs-password' _mandatory
+    fi
+    CM_VCS_PASSWORD="$metaDataValue"
+    getMetaData 'cm-vcs-revision'
+    _vcs_revision="$metaDataValue"
+    # Company name is mandatory
+    getMetaData 'cm-organization' _mandatory
+    CM_ORGANIZATION="$metaDataValue"
+    # Project name is mandatory
+    getMetaData 'cm-project' _mandatory
+    CM_PROJECT="$metaDataValue"
+    # Instance type is mandatory
+    getMetaData 'cm-type' _mandatory
+    CM_TYPE="$metaDataValue"
+    getMetaData 'cm-hostname'
+    CM_HOSTNAME="$metaDataValue"
+    getMetaData 'cm-set-hostname'
+    CM_SET_HOSTNAME="$metaDataValue"
+    getMetaData 'cm-args'
+    CM_ARGS="$metaDataValue"
+    getMetaData 'cm-run-once'
+    run_once="$metaDataValue"
+    getMetaData 'cm-startup-delay'
+    startup_delay="$metaDataValue"
+
+    if [ ! -z "$CM_VCS_USERNAME" ] && [ -z "$CM_VCS_PASSWORD" ] && [[ _mandatory -eq 1 ]]; then
+        fatalError 'Metadata cm-vcs-password not defined, terminating.' 13
+    fi
+    if [ -z "$CM_ORGANIZATION" ] && [[ _mandatory -eq 1 ]]; then
+        fatalError 'Metadata cm-organization not defined, terminating.' 14
+    fi
+    if [ -z "$CM_PROJECT" ] && [[ _mandatory -eq 1 ]]; then
+        fatalError 'Metadata cm-project not defined, terminating.' 15
+    fi
+    if [ -z "$CM_TYPE" ] && [[ _mandatory -eq 1 ]]; then
+        fatalError 'Metadata cm-type not defined, terminating.' 16
+    fi
+
+    if [ -z "$_vcs_revision" ] && [[ _mandatory -eq 1 ]]; then
+        logInfo "Metadata cm-vcs-revision not defined, using '$default_vcs_revision' revision."
+        CM_VCS_REVISION="$default_vcs_revision"
+    else
+        # explicit revisions are only supported on Subversion
+        if [ "$CM_VCS_REPO_TYPE" != "Subversion" ]; then
+            fatalError 'Metadata cm-vcs-revision only supported with Subversion repositories.' 17
+        else
+            CM_VCS_REVISION="$_vcs_revision"
+        fi
+    fi
+
+    # if HTTP proxy was specified but yum proxy was not
+    # specified, then use the HTTP proxy value for both
+    if [ ! -z "$CM_HTTP_PROXY" ]; then
+        # if HTTPS proxy is not explicitly set, then
+        # set it to be the same as the HTTP proxy
+        if [ -z "$CM_HTTPS_PROXY" ]; then
+            logInfo "Using HTTP proxy value for both HTTP and HTTPS proxies."
+            CM_HTTPS_PROXY="$CM_HTTP_PROXY"
+        fi
+        if [ -z "$CM_YUM_PROXY" ]; then
+            CM_YUM_PROXY="$CM_HTTP_PROXY"
+            # also use HTTP proxy username and password as yum
+            # proxy username and password, if specified
+            if [ ! -z "$CM_HTTP_PROXY_USERNAME" ]; then
+                CM_YUM_PROXY_USERNAME="$CM_HTTP_PROXY_USERNAME"
+            fi
+            if [ ! -z "$CM_HTTP_PROXY_PASSWORD" ]; then
+                CM_YUM_PROXY_PASSWORD="$CM_HTTP_PROXY_PASSWORD"
+            fi
+        fi
+    fi
+
+    # if HTTPS proxy is set to dash value, then handle this
+    # as no HTTPS proxy - this option allows HTTPS proxying
+    # to be disabled while HTTP proxying is configured
+    if [ "$CM_HTTPS_PROXY" = "-" ]; then
+        logInfo "HTTPS proxy has been specified as none."
+        CM_HTTPS_PROXY=''
+    fi
+
+    logInfo 'Instance metadata retrieved.'
+    if [ -z "$CM_VCS_USERNAME" ]; then
+        logInfo "VCS username: $CM_VCS_USERNAME"
+    fi
+    if [ -z "$CM_ORGANIZATION" ]; then
+        logInfo "Company: $CM_ORGANIZATION"
+    fi
+    if [ -z "$CM_PROJECT" ]; then
+        logInfo "Project: $CM_PROJECT"
+    fi
+    if [ -z "$CM_TYPE" ]; then
+    logInfo "Type: $CM_TYPE"
+    fi
+
+    # terminate if configuration management has previously
+    # completed successfully, unless "run once" is disabled
+    if [ "$run_once" != "false" ] && [ -e "$success_path" ]; then
+        logInfo 'Configuration management successfully completed previously.'
+        exit 0;
+    fi
+
+    # export metadata variables to make accessible by subsequent scripts
+    export CM_VCS_REPO_BASE
+    if [ ! -z "$CM_VCS_REPO_BASE_PATH" ]; then
+        export CM_VCS_REPO_BASE_PATH
+    fi
+    export CM_VCS_REPO_TYPE
+    if [ ! -z "$CM_VCS_ACCEPT_INVALID_SSL" ]; then
+        export CM_VCS_ACCEPT_INVALID_SSL
+    fi
+    if [ ! -z "$CM_VCS_SVN_VERSION" ]; then
+        export CM_VCS_SVN_VERSION
+    fi
+    if [ ! -z "$CM_VCS_GIT_VERSION" ]; then
+        export CM_VCS_GIT_VERSION
+    fi
+    if [ ! -z "$CM_VCS_USERNAME" ]; then
+        export CM_VCS_USERNAME
+    fi
+    if [ ! -z "$CM_VCS_PASSWORD" ]; then
+        export CM_VCS_PASSWORD
+    fi
+    if [ ! -z "$CM_VCS_REVISION" ]; then
+        export CM_VCS_REVISION
+    fi
+    export CM_ORGANIZATION
+    export CM_PROJECT
+    export CM_TYPE
+    if [ ! -z "$CM_HOSTNAME" ]; then
+        export CM_HOSTNAME
+    fi
+    if [ ! -z "$CM_SET_HOSTNAME" ]; then
+        export CM_SET_HOSTNAME
+    fi
+    if [ ! -z "$CM_ARGS" ]; then
+        export CM_ARGS
+    fi
+    if [ ! -z "$CM_GOOGLE_COMPUTE_ENGINE" ]; then
+        export CM_GOOGLE_COMPUTE_ENGINE
+    fi
+    if [ ! -z "$CM_AMAZON_EC2" ]; then
+        export CM_AMAZON_EC2
+    fi
+    if [ ! -z "$CM_AMAZON_LINUX" ]; then
+        export CM_AMAZON_LINUX
+    fi
+    if [ ! -z "$CM_VMWARE" ]; then
+        export CM_VMWARE
+    fi
+    if [ ! -z "$CM_VIRTUALBOX" ]; then
+        export CM_VIRTUALBOX
+    fi
+    if [ ! -z "$CM_YUM_PROXY" ]; then
+        export CM_YUM_PROXY
+    fi
+    if [ ! -z "$CM_HTTP_PROXY" ]; then
+        export CM_HTTP_PROXY
+    fi
+    if [ ! -z "$CM_HTTPS_PROXY" ]; then
+        export CM_HTTPS_PROXY
+    fi
+    if [ ! -z "$CM_HTTP_PROXY_USERNAME" ]; then
+        export CM_HTTP_PROXY_USERNAME
+    fi
+    if [ ! -z "$CM_HTTP_PROXY_PASSWORD" ]; then
+        export CM_HTTP_PROXY_PASSWORD
+    fi
+
+    # insert proxy authentication details into proxy address if required
+    _proxy_auth="$CM_HTTP_PROXY_USERNAME:$CM_HTTP_PROXY_PASSWORD@"
+    if [ ! -z "$CM_HTTP_PROXY" ] && [ ! -z "$CM_HTTP_PROXY_USERNAME" ]; then
+        _http_proxy="${CM_HTTP_PROXY/http\:\/\//http://$_proxy_auth}"
+    else
+        _http_proxy="$CM_HTTP_PROXY"
+    fi
+    if [ ! -z "$CM_HTTPS_PROXY" ] && [ ! -z "$CM_HTTP_PROXY_USERNAME" ]; then
+        _https_proxy="${CM_HTTPS_PROXY/http\:\/\//http://$_proxy_auth}"
+    else
+        _https_proxy="$_http_proxy"
+    fi
+
+    # export proxy environment variables in both upper and lower
+    # case, as different software expects different variations
+    if [ ! -z "$CM_HTTP_PROXY" ]; then
+        export HTTP_PROXY="$_http_proxy"
+        export http_proxy="$_http_proxy"
+    fi
+    if [ ! -z "$CM_HTTPS_PROXY" ]; then
+        export https_proxy="$_https_proxy"
+        export HTTPS_PROXY="$_https_proxy"
+    fi
+
+    # delay before proceeding further, if a delay is specified
+    if [ ! -z "$startup_delay" ]; then
+
+        # if delay string ends in R, then randomize delay between
+        # zero and the value proceeding the R character
+        startup_randomized=$(echo -n "$startup_delay" | tail -c 1)
+        if [ "$startup_randomized" = "R" ]; then
+            # remove R character from end to extract delay value
+            startup_delay=${startup_delay::-1}
+        fi
+        if [ "$startup_delay" -eq "$startup_delay" ] 2>/dev/null; then
+            if [ "$startup_randomized" = "R" ]; then
+                startup_delay=$(echo $(( $RANDOM % $startup_delay )))
+            fi
+            logInfo "Delaying configuration management startup by $startup_delay seconds..."
+            sleep "$startup_delay"
+        else
+            logInfo "Invalid configuration management startup delay value '$startup_delay'."
+        fi
+
+    fi
+
+}
+
+
+# temporary storage configuration
+# --------------------------------------------------------------------------------
+function configTemp() {
+
+    # alternative temp directory can be passed in as a function parameter
+    if [ -z "$CM_TMP_DIR" ]; then
+        tmp_dir="$default_tmp_dir"
+    else
+        tmp_dir="$CM_TMP_DIR"
+    fi
+
+    makeDirectory "$tmp_dir"
+
+    local_cm_dir="$tmp_dir/cmbootstrap"
+    git_clone_tmp_path="$tmp_dir/.cm_git"
+
+    # set TMPDIR environment variable to control download
+    # location used by Ansible get_url module
+    export TMPDIR="$tmp_dir"
+
+}
+
+
+# version control configuration
+# --------------------------------------------------------------------------------
+function configVcs() {
+
+    if [ "$CM_VCS_REPO_TYPE" = "Subversion" ]; then
+        configSubversion
+    elif [ "$CM_VCS_REPO_TYPE" = "Git" ]; then
+        configGit
+    else
+        fatalError "Invalid version control type '$CM_VCS_REPO_TYPE'.", 91
+    fi
+
+}
+
+
+# Subversion configuration
+# --------------------------------------------------------------------------------
+function configSubversion() {
+
+    # use default Subversion package if not specified in config file or metadata
+    if [ -z "$CM_VCS_SVN_VERSION" ]; then
+        svn_version="$default_svn_version"
+    else
+        svn_version="$CM_VCS_SVN_VERSION"
+    fi
+
+}
+
+
+# Git configuration
+# --------------------------------------------------------------------------------
+function configGit() {
+
+    # use default Git package if not specified in config file or metadata
+    if [ -z "$CM_VCS_GIT_VERSION" ]; then
+        git_version="$default_git_version"
+    else
+        git_version="$CM_VCS_GIT_VERSION"
+    fi
+
+    git_params=( -c http.sslVerify=false )
+
+}
+
+
+# configuration management configuration
+# --------------------------------------------------------------------------------
+function configCm() {
+
+    configAnsible
+
+}
+
+
+# Ansible configuration
+# --------------------------------------------------------------------------------
+function configAnsible() {
+
+    # use default Ansible package if not specified in config file or metadata
+    if [ -z "$CM_ANSIBLE_VERSION" ]; then
+        ansible_version="$default_ansible_version"
+    else
+        ansible_version="$CM_ANSIBLE_VERSION"
+    fi
+
+    local_ansible_main_file="$local_cm_dir/$ansible_main_file"
+    local_ansible_init_file="$local_cm_dir/$ansible_init_file"
+    ansible_log_path="$cmbootstrap_dir/ansible.log.$timestamp"
+    ansible_err_path="$cmbootstrap_dir/ansible.err.$timestamp"
+    ansible_hosts_path="/etc/ansible"
+    ansible_hosts_file="$ansible_hosts_path/hosts"
+
+}
+
+
+# configuration file value retrieval
+# --------------------------------------------------------------------------------
+function readConfigFileValue() {
+
+    local _configName=$1
+
+    configValue=$(cat "$cmbootstrap_config_path" | grep "^$_configName\:" | awk -F':' '{ val = index($0,":");print substr($0,val+1)}')
+
+    if [ ! -z "$configValue" ]; then
+        logInfo "Config value $_configName='$configValue' retrieved."
+    fi
+
+}
+
+
+# hostname configuration
+# --------------------------------------------------------------------------------
+function configHostname() {
+
+    # do nothing if "set hostname" not enabled
+    if [ "$CM_SET_HOSTNAME" != "true" ]; then
+        logInfo 'Hostname setting not enabled, retaining default hostname.'
+        return
+    fi
+
+    # do nothing if the instance hostname was not specified
+    if [ -z "$CM_HOSTNAME" ]; then
+        logInfo 'Instance hostname not configured, retaining default hostname.'
+        return
+    fi
+
+    # check that hostnamectl command is installed and executable
+    command -v hostnamectl >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        fatalError 'Unable to set hostname, hostnamectl command not available, terminating.' 21
+    fi
+
+    # change the hostname
+    logInfo "Setting hostname to $CM_HOSTNAME"
+    hostnamectl set-hostname "$CM_HOSTNAME"
+
+}
+
+
+# prerequisites install
+# --------------------------------------------------------------------------------
+function installPrerequisites() {
+
+    # install and prepare package management
+    installPackageManagement
+
+    # install configuration management
+    installCm
+
+    # install version control
+    installVersionControl
+
+}
+
+
+# configuration management install
+# --------------------------------------------------------------------------------
+function installPackageManagement() {
+
+    # check if yum command is installed and executable
+    command -v yum >/dev/null 2>&1
+
+    # prepare yum if it is installed
+    if [ $? -eq 0 ]; then
+
+        # configure yum proxy
+        configYumProxy
+
+        # install yum utils
+        logInfo 'Installing yum utils...'
+        installPackage "yum-utils"
+
+        if [ "$verbose_mode" -eq 1 ]; then
+            yum-complete-transaction
+            # ensure EPEL repository is enabled - disabled by default on Amazon Linux
+            yum-config-manager --enable epel/x86_64
+        else
+            # ensure EPEL repository is enabled - disabled by default on Amazon Linux
+            yum-config-manager --enable epel/x86_64 >>"$yum_log_path" 2>>"$yum_err_path"
+            yum-complete-transaction >>"$yum_log_path" 2>>"$yum_err_path"
+        fi
+
+        # EPEL packages only apply for CentOS/yum
+        logInfo 'Installing Extra Packages for Enterprise Linux...'
+        installPackage "epel-release"
+
+    fi
+
+}
+
+
+# yum proxy configuration
+# --------------------------------------------------------------------------------
+function configYumProxy() {
+
+    local _proxy_line
+    local _yum_conf
+
+    if [ ! -z "$CM_YUM_PROXY" ]; then
+
+        logInfo "Configuring yum proxy server '$CM_YUM_PROXY'."
+
+        _yum_conf='/etc/yum.conf'
+        _proxy_line="proxy=$CM_YUM_PROXY"
+        _proxy_username_line="proxy_username=$CM_YUM_PROXY_USERNAME"
+        _proxy_password_line="proxy_password=$CM_YUM_PROXY_PASSWORD"
+
+        # add proxy entry to yum.conf if not already present
+        if grep -q "^$_proxy_line" "$_yum_conf" ; then
+            logInfo "Proxy entry already exists in $_yum_conf."
+        else
+            # comment out any previous proxy lines
+            sed -i 's/^proxy=/#proxy=/' "$_yum_conf"
+            echo "proxy=$CM_YUM_PROXY" >> "$_yum_conf"
+            logInfo "Proxy entry added to $_yum_conf."
+        fi
+        # add proxy username entry to yum.conf if not already present
+        if grep -q "^$_proxy_username_line" "$_yum_conf" ; then
+            logInfo "Proxy username entry already exists in $_yum_conf."
+        else
+            # comment out any previous proxy username lines
+            sed -i 's/^proxy_username=/#proxy_username=/' "$_yum_conf"
+            echo "$_proxy_username_line" >> "$_yum_conf"
+            logInfo "Proxy username entry added to $_yum_conf."
+        fi
+        # add proxy password entry to yum.conf if not already present
+        if grep -q "^$_proxy_password_line" "$_yum_conf" ; then
+            logInfo "Proxy password entry already exists in $_yum_conf."
+        else
+            # comment out any previous proxy password lines
+            sed -i 's/^proxy_password=/#proxy_password=/' "$_yum_conf"
+            echo "$_proxy_password_line" >> "$_yum_conf"
+            logInfo "Proxy password entry added to $_yum_conf."
+        fi
+
+        # configure yum repositories to only use base URLs and not mirror list
+        sed -i 's/^mirrorlist=/#mirrorlist=/' /etc/yum.repos.d/*.repo
+        sed -i 's/^#baseurl=/baseurl=/' /etc/yum.repos.d/*.repo
+
+        logInfo "yum repository base URLs enabled."
+
+    fi
+
+}
+
+
+# configuration management install
+# --------------------------------------------------------------------------------
+function installCm() {
+
+    installAnsible
+
+}
+
+
+# version control install
+# --------------------------------------------------------------------------------
+function installVersionControl() {
+
+    if [ "$CM_VCS_REPO_TYPE" = "Subversion" ]; then
+        installSubversion
+    elif [ "$CM_VCS_REPO_TYPE" = "Git" ]; then
+        installGit
+    else
+        fatalError "Invalid version control type '$CM_VCS_REPO_TYPE'.", 92
+    fi
+
+}
+
+
+# fetch configuration management files
+# --------------------------------------------------------------------------------
+function cmFetchFiles() {
+
+    # use local files if available - used during configuration management development
+    checkIfLocalCmFilesExist
+    if [ "$?" -eq 1 ]; then
+        logInfo "Local configuration management found, skipping fetch from version control."
+        return
+    else
+        logInfo "Local configuration management not found, fetching from version control."
+    fi
+
+    cmFetchStartupFiles
+
+}
+
+
+# fetch main configuration management files
+# --------------------------------------------------------------------------------
+function cmFetchStartupFiles() {
+
+    local _repo_base
+
+    cd "$vcs_local_path"
+
+    logInfo 'Fetching configuration management files...'
+
+    # build path to configuration management file location based on metadata
+    CM_VCS_REPO_SUB_PATH="$CM_ORGANIZATION/$CM_PROJECT/$CM_TYPE"
+
+    # if CM_VCS_REPO_BASE_PATH is set, append on to the end of the repo base URL
+    if [ ! -z "$CM_VCS_REPO_BASE_PATH" ]; then
+        logInfo "Using repo base '$CM_VCS_REPO_BASE' plus repo base path '$CM_VCS_REPO_BASE_PATH'"
+        _repo_base="$CM_VCS_REPO_BASE/$CM_VCS_REPO_BASE_PATH"
+    else
+        logInfo "Using repo base '$CM_VCS_REPO_BASE'"
+        _repo_base="$CM_VCS_REPO_BASE"
+    fi
+
+    CM_VCS_REPO_PATH="$_repo_base/$CM_VCS_REPO_SUB_PATH/$CM_HOSTNAME"
+
+    # now retrieve instance specific configuration management file from
+    # version control if it exists, otherwise attempt generic version
+    if [ ! -z "$CM_HOSTNAME" ]; then
+        logInfo 'Looking for instance specific configuration management file.'
+        vcsCheckFileExists "$CM_VCS_REPO_PATH/$ansible_main_file"
+    fi
+
+    if [ $? -eq 0 ] && [ ! -z "$CM_HOSTNAME" ]; then
+
+        logInfo 'Instance specific configuration management file found.'
+        vcsRetrieveFile "$CM_VCS_REPO_PATH/$ansible_main_file"
+        # attempt to retrieve configuration management init file
+        # if alongside the main configuration management file
+        vcsCheckFileExists "$CM_VCS_REPO_PATH/$ansible_init_file"
+        if [ $? -eq 0 ]; then
+            logInfo 'Configuration management initialization file found, retrieving.'
+            vcsRetrieveFile "$CM_VCS_REPO_PATH/$ansible_init_file"
+        fi
+        vcsCheckFileExists "$CM_VCS_REPO_PATH/$ansible_config_file"
+        if [ $? -eq 0 ]; then
+            logInfo 'Config playbook file found, retrieving.'
+            vcsRetrieveFile "$CM_VCS_REPO_PATH/$ansible_config_file"
+        fi
+
+    else
+
+        logInfo 'Looking for type generic configuration management file.'
+
+        CM_VCS_REPO_PATH="$_repo_base/$CM_VCS_REPO_SUB_PATH"
+
+        vcsCheckFileExists "$CM_VCS_REPO_PATH/$ansible_main_file"
+
+        if [ $? -eq 0 ]; then
+            logInfo 'Type generic configuration management file found.'
+            vcsRetrieveFile "$CM_VCS_REPO_PATH/$ansible_main_file"
+            # attempt to retrieve configuration management initialization file
+            vcsCheckFileExists "$CM_VCS_REPO_PATH/$ansible_init_file"
+            if [ $? -eq 0 ]; then
+                logInfo 'Configuration management initialization file found, retrieving.'
+                vcsRetrieveFile "$CM_VCS_REPO_PATH/$ansible_init_file"
+            fi
+            vcsCheckFileExists "$CM_VCS_REPO_PATH/$ansible_config_file"
+            if [ $? -eq 0 ]; then
+                logInfo 'Configuration management config file found, retrieving.'
+                vcsRetrieveFile "$CM_VCS_REPO_PATH/$ansible_config_file"
+            fi
+        else
+            # the following condition may occur either because the configuration management
+            # files do not exist, or because of an invalid version control configuration
+            fatalError 'Type generic configuration management file not available, terminating.' 31
+        fi
+
+    fi
+
+    # export discovered configuration management VCS path to make accessible to subsequent scripts
+    export CM_VCS_REPO_PATH
+    export CM_VCS_REPO_SUB_PATH
+
+    # check the configuration management file now exists locally
+    if [ ! -f "$vcs_local_path/$ansible_main_file" ]; then
+        fatalError 'Unable to retrieve configuration management file, terminating.' 32
+    fi
+
+}
+
+
+# run configuration management initialization file
+# --------------------------------------------------------------------------------
+function cmRunInitFile() {
+
+    local _cmPath
+    local _errorCode
+
+    # if a configuration management initialization file was found, execute it
+    # first, as it maybe be fetching further files on which the main configuration
+    # management file is dependent
+    _cmPath="$vcs_local_path/$ansible_init_file"
+    if [ -f "$_cmPath" ]; then
+        logInfo "Executing configuration management initialization file $_cmPath."
+        cmRun "$_cmPath"
+        _errorCode=$?
+        if [ "$_errorCode" != 0 ]; then
+            fatalError "Configuration management '$_cmPath' failed." "$_errorCode"
+        else
+            logInfo 'Configuration management initialization complete.'
+        fi
+    fi
+
+}
+
+
+# generic VCS functions
+# --------------------------------------------------------------------------------
+function vcsCheckFileExists() {
+
+    if [ "$CM_VCS_REPO_TYPE" = "Subversion" ]; then
+        subversionCheckFileExists $1
+    elif [ "$CM_VCS_REPO_TYPE" = "Git" ]; then
+        gitCheckFileExists $1
+    else
+        fatalError "Invalid version control type '$CM_VCS_REPO_TYPE'.", 93
+    fi
+
+}
+function vcsRetrieveFile() {
+
+    if [ "$CM_VCS_REPO_TYPE" = "Subversion" ]; then
+        subversionRetrieveFile $1
+    elif [ "$CM_VCS_REPO_TYPE" = "Git" ]; then
+        gitRetrieveFile $1
+    else
+        fatalError "Invalid version control type '$CM_VCS_REPO_TYPE'.", 94
+    fi
+
+}
+
+
+# run main configuration management file
+# --------------------------------------------------------------------------------
+function cmRunMainFile() {
+
+    local _cmPath
+    local _message
+    local _errorCode
+
+    # use local files if available - used for configuration management development
+    checkIfLocalCmFilesExist
+    if [ $? -eq 1 ]; then
+        _cmPath="$local_ansible_main_file"
+        _message="Executing local configuration management file $_cmPath."
+    else
+        _cmPath="$vcs_local_path/$ansible_main_file"
+        _message="Executing main configuration management file $_cmPath."
+    fi
+    logInfo "$_message"
+    if [ "$verbose_mode" -ne 1 ]; then
+        echo "$_message" >>"$ansible_log_path"
+    fi
+
+    # execute the configuration management file
+    cmRun "$_cmPath"
+    _errorCode=$?
+    if [ "$_errorCode" != 0 ]; then
+        fatalError 'Configuration management failed.' "$_errorCode"
+    else
+        # create file to record success - this is
+        # ignored if run-once is set to false
+        touch "$success_path"
+        logInfo 'Configuration management complete.'
+    fi
+
+}
+
+
+# configuration management file runner
+# --------------------------------------------------------------------------------
+function cmRun() {
+
+    windowsToUnixFormat "$1"
+    ansibleRun $1
+
+}
+
+
+# generic (auto-detecting) metadata retrieval function
+# --------------------------------------------------------------------------------
+function getMetaData() {
+
+    local _metaDataName=$1
+    local _mandatory=$2
+
+    # detect Google Compute Engine instance
+    checkGoogleComputeAvailable
+    if [ $? -eq 0 ]; then
+        if [ -z "$CM_GOOGLE_COMPUTE_ENGINE" ]; then
+            logInfo "Google Compute Engine detected."
+        fi
+        CM_GOOGLE_COMPUTE_ENGINE=1
+        getMetaDataGoogleComputeEngine "$_metaDataName" "$_mandatory"
+        return
+    fi
+
+    # detect Amazon EC2 instance
+    checkAmazonEC2Available
+    if [ $? -eq 0 ]; then
+        if [ -z "$CM_AMAZON_EC2" ]; then
+            logInfo "Amazon EC2 detected."
+        fi
+        CM_AMAZON_EC2=1
+        checkAmazonLinuxAvailable
+        if [ $? -eq 0 ]; then
+            if [ -z "$CM_AMAZON_LINUX" ]; then
+                logInfo "Amazon Linux detected."
+            fi
+            CM_AMAZON_LINUX=1
+        else
+            CM_AMAZON_LINUX=0
+        fi
+        getMetaDataAmazonEC2 "$_metaDataName" "$_mandatory"
+        return
+    fi
+
+    # detect VMware instance
+    checkVMwareAvailable
+    if [ $? -eq 0 ]; then
+        CM_VMWARE=1
+        if [ -z "$CM_VMWARE" ]; then
+            logInfo "VMware detected."
+        fi
+        getMetaDataVMware "$_metaDataName" "$_mandatory"
+        return
+    fi
+
+    # detect VirtualBox instance
+    checkVirtualBoxAvailable
+    if [ $? -eq 0 ]; then
+        if [ -z "$CM_VIRTUALBOX" ]; then
+            logInfo "VirtualBox detected."
+        fi
+        CM_VIRTUALBOX=1
+        getMetaDataVirtualBox "$_metaDataName" "$_mandatory"
+        return
+    fi
+
+    logInfo "Virtualization not detected, checking environment variables."
+
+    # finally attempt to retrieve metadata via environment variables
+    getMetaDataEnvironment "$_metaDataName" "$_mandatory"
+
+}
+
+
+# Google Compute Engine metadata retrieval function
+# --------------------------------------------------------------------------------
+function getMetaDataGoogleComputeEngine() {
+
+    local _metaDataName=$1
+    local _mandatory=$2
+
+    if [ "$verbose_mode" -eq 1 ]; then
+        metaDataValue=$(curl --fail --header "$gce_metadata_header" "$gce_metadata_url/attributes/$_metaDataName")
+    else
+        metaDataValue=$(curl --fail --header "$gce_metadata_header" "$gce_metadata_url/attributes/$_metaDataName") 2>>"$cmbootstrap_err_path"
+    fi
+    if [ $? -ne 0 ]; then
+
+        metaDataValue=''
+
+        # terminate if parameter was marked as mandatory
+		if [ "$_mandatory" = "1" ]; then
+			fatalError "Error retrieving '$_metaDataName' mandatory metadata value from Google Compute Engine, terminating." 41
+		fi
+
+    elif [ ! -z "$metaDataValue" ]; then
+    	logInfo "Metadata $_metaDataName='$metaDataValue' retrieved."
+    fi
+
+}
+
+
+# VMware metadata retrieval function
+# --------------------------------------------------------------------------------
+function getMetaDataVMware() {
+
+    local _metaDataName=$1
+    local _mandatory=$2
+
+	# the vmtools command will return 'No value found' if the metadata value does not
+	# exist - this message does not need to be logged and is redirected to /dev/null
+	if [ "$verbose_mode" -eq 1 ]; then
+        metaDataValue=$(vmtoolsd --cmd "info-get guestinfo.$_metaDataName" 2>/dev/null)
+    else
+        metaDataValue=$(vmtoolsd --cmd "info-get guestinfo.$_metaDataName" 2>/dev/null) >>"$cmbootstrap_log_path"
+    fi
+    if [ $? -ne 0 ]; then
+
+    	metaDataValue=''
+
+		# terminate if parameter was marked as mandatory
+		if [ "$_mandatory" = 1 ]; then
+			fatalError "Error retrieving '$_metaDataName' mandatory metadata value from VMware config, terminating." 42
+		fi
+
+    elif [ ! -z "$metaDataValue" ]; then
+    	logInfo "Metadata $_metaDataName='$metaDataValue' retrieved."
+    fi
+
+}
+
+
+# VirtualBox metadata retrieval function
+# --------------------------------------------------------------------------------
+function getMetaDataVirtualBox() {
+
+    local _metaDataName=$1
+    local _mandatory=$2
+
+    metaDataValue=$(VBoxControl --nologo guestproperty get "$1")
+
+    if [ $? -ne 0 ] || [ "$metaDataValue" == "No value set!" ]; then
+
+    	metaDataValue=''
+
+		# terminate if parameter was marked as mandatory
+		if [ "$_mandatory" = 1 ]; then
+			fatalError "Error retrieving '$_metaDataName' mandatory metadata value from VirtualBox config, terminating." 43
+		fi
+
+	else
+
+	    # remove  "Value: " prefix from returned metadata value
+	    metaDataValue=$(echo "$metaDataValue" | sed s/Value\:[[:space:]]//g)
+
+    	logInfo "Metadata $_metaDataName='$metaDataValue' retrieved."
+
+    fi
+
+}
+
+
+# Amazon EC2 metadata retrieval function
+#
+# Note: EC2 metadata can either be defined in the "user-data" field, as
+# multiple lines and in name=value format, and where metadata names use
+# underscore rather than hyphen, or alternatively using EC2 tags with
+# standard naming format.
+# --------------------------------------------------------------------------------
+function getMetaDataAmazonEC2() {
+
+    local _exitCode
+    local _userData
+    local _metaDataName=$1
+    local _mandatory=$2
+
+    # first attempt to retrieve the metadata in the form of an AWS tag
+    getAmazonEC2Tag "$_metaDataName"
+    _exitCode=$?
+    if [ "$_exitCode" -eq "0" ] && [ ! -z "$ec2TagValue" ]; then
+        metaDataValue="$ec2TagValue"
+        logInfo "Metadata $_metaDataName='$metaDataValue' retrieved from EC2 tag."
+        return
+    elif [ "$_exitCode" -ne "0" ]; then
+        if [[ "$getAmazonEC2Tag_Error" -ne 1 ]]; then
+            logInfo "Error retrieving metadata $_metaDataName from EC2 tag (error code $_exitCode)."
+        fi
+        getAmazonEC2Tag_Error=1
+    fi
+
+    # if metadata was not found as a tag, retrieve the EC2 user data and
+    # look for the metadata in the form of bash variable assignments
+    _userData=$(curl --fail "$amazon_ec2_metadata_url" 2>/dev/null)
+    if [ $? -ne 0 ]; then
+
+        metaDataValue=''
+
+        # terminate if parameter was marked as mandatory
+		if [ "$_mandatory" = "1" ]; then
+            fatalError 'Error retrieving user data from Amazon EC2, terminating.' 44
+		fi
+
+    else
+
+        # swap '-' for '_' in meta data name - this is required for EC2 user
+        # data because '-' is not a valid character in a shell variable name
+        _metaDataName=$(echo "$_metaDataName" | tr '-' '_')
+
+        # extract metadata value from overall user data contents, assuming name=value format at start of a line
+        metaDataValue=$(echo "$_userData" | grep "^$_metaDataName=" | awk -F'=' '{ val = index($0,"=");print substr($0,val+1)}')
+
+        if [ ! -z "$metaDataValue" ]; then
+    	    logInfo "Metadata $_metaDataName='$metaDataValue' retrieved from EC2 user data."
+        fi
+
+    fi
+
+}
+
+
+# Amazon EC2 tag retrieval function
+#
+# Note: This function will only work if the EC2 instance has been assigned a role
+# which includes the "ec2:DescribeTags" permission.
+# --------------------------------------------------------------------------------
+function getAmazonEC2Tag() {
+
+    local _tagName=$1
+    local _ec2InstanceId
+    local _filter_params
+    local _aws_region
+    local _tagValues
+
+    # skip if AWS CLI commands were previously detected as not available
+    if [[ "$getAmazonEC2Tag_EnvironmentError" -eq 1 ]]; then
+        return 1
+    fi
+
+    # check that aws and ec2-metadata commands are installed
+    command -v aws >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        logInfo 'aws command not installed, EC2 tags not available.'
+        getAmazonEC2Tag_EnvironmentError=1
+        return 2
+    fi
+    command -v "$amazon_ec2_metadata_cmd" >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        logInfo "$amazon_ec2_metadata_cmd command not installed, EC2 tags not available."
+        getAmazonEC2Tag_EnvironmentError=1
+        return 3
+    fi
+
+    # retrieve EC2 instance ID
+    _ec2InstanceId=$("$amazon_ec2_metadata_cmd" -i | cut -d ' ' -f2)
+    if [ -z "$_ec2InstanceId" ]; then
+        logInfo 'EC2 instance ID not available, cannot retrieve EC2 tags.'
+        return 4
+    fi
+
+    # retrieve AWS region
+    _aws_region=$("$amazon_ec2_metadata_cmd" --availability-zone | cut -d ' ' -f2)
+    _aws_region=${_aws_region%?}
+    if [ -z "$_aws_region" ]; then
+        logInfo 'AWS region not available, cannot retrieve EC2 tags.'
+        return 5
+    fi
+
+    # set aws ec2 describe-tags filter parameters
+    _filter_params=( --filters "Name=key,Values=$_tagName" "Name=resource-type,Values=instance" "Name=resource-id,Values=$_ec2InstanceId" )
+
+    # retrieve tags
+    _tagValues=$(aws ec2 describe-tags --output text --region "$_aws_region" "${_filter_params[@]}")
+    if [ $? -ne 0 ]; then
+        getAmazonEC2Tag_EnvironmentError=1
+        logInfo 'Error retrieving EC2 tag value.  Check EC2 role includes ec2:DescribeTags permission.'
+        return 6
+    fi
+
+    # extract required tag value
+    ec2TagValue=$(echo "$_tagValues" | cut -f5)
+
+}
+
+
+# Environment variable based metadata retrieval function
+# --------------------------------------------------------------------------------
+function getMetaDataEnvironment() {
+
+    local _metaDataName=$1
+    local _mandatory=$2
+    local _metaDataEnvName
+
+    # the expected environment variable name is the metadata name, converted
+    # to uppercase and with '-' replaced with '_'
+    _metaDataEnvName=$(echo "$_metaDataName" | tr '[:lower:]' '[:upper:]')
+    _metaDataEnvName=$(echo "$_metaDataEnvName" | tr '-' '_')
+    metaDataValue=$(printenv "$_metaDataEnvName")
+
+    # no mandatory check is performed, as undefined and defined-as-blank are the same for environment variables
+    if [ ! -z "$metaDataValue" ]; then
+        logInfo "Metadata $_metaDataName found in environment variable."
+    fi
+
+}
+
+
+# VMware availability check function
+# --------------------------------------------------------------------------------
+function checkVMwareAvailable() {
+
+    # check for availability of vmtoolsd RPC calls rather than simply the
+    # availability of the executable, as VMware Tools may be installed on
+    # VMware/VirtualBox common VM images
+    vmtoolsd --cmd "info-set guestinfo.vmware-detect 1" >/dev/null 2>&1
+
+}
+
+
+# VirtualBox availability check function
+# --------------------------------------------------------------------------------
+function checkVirtualBoxAvailable() {
+
+    # detect VirtualBox instances via VBoxControl executable
+    VBoxControl version >/dev/null 2>&1
+
+}
+
+
+# Google Compute Engine availability check function
+# --------------------------------------------------------------------------------
+function checkGoogleComputeAvailable() {
+
+    # detect GCE instances via script runner executable
+    google_metadata_script_runner --help >/dev/null 2>&1
+
+}
+
+
+# Amazon EC2 and Amazon Linux availability check functions
+# --------------------------------------------------------------------------------
+function checkAmazonEC2Available() {
+
+    # detect Amazon EC2 instances via /sys/hypervisor/uuid
+    if [ -f /sys/hypervisor/uuid ] && [ `head -c 3 /sys/hypervisor/uuid` == ec2 ]; then
+        return 0
+    else
+        return 1
+    fi
+
+}
+function checkAmazonLinuxAvailable() {
+
+    local _system
+    # use /etc/system-release contents to determine if running on Amazon Linux
+    if [ ! -f "/etc/system-release" ]; then
+        return 1
+    fi
+
+    _system=$(cat /etc/system-release)
+    if [[ "$_system" == "Amazon Linux "* ]]; then
+        return 0
+    else
+        return 1
+    fi
+
+}
+
+
+# package installer
+# --------------------------------------------------------------------------------
+function installPackage() {
+
+    local _packageName=$1
+
+    if [ -z "$_packageName" ]; then
+        fatalError 'Package name not provided.' 94
+    fi
+
+    # check if yum command is installed and executable
+    command -v yum >/dev/null 2>&1
+
+    # install package using yum if available
+    if [ $? -eq 0 ]; then
+
+        logInfo "Installing yum package '$_packageName'..."
+        if [ "$verbose_mode" -eq 1 ]; then
+            yum -y install "$_packageName"
+        else
+            yum -y install "$_packageName" >>"$yum_log_path" 2>>"$yum_err_path"
+        fi
+
+        # terminate if package not available
+        if [ ! $? -eq 0 ]; then
+            fatalError "Package '$_packageName' not available." 22
+        fi
+
+        return
+    fi
+
+    # if yum was not found, check for apt-get command instead
+    command -v apt-get >/dev/null 2>&1
+    if [ $? -eq 0 ]; then
+
+        if [ "$verbose_mode" -eq 1 ]; then
+            apt-get -y install "$_packageName"
+        else
+            apt-get -y install "$_packageName" >>"$yum_log_path" 2>>"$yum_err_path"
+        fi
+
+        # terminate if package not available
+        if [ ! $? -eq 0 ]; then
+            fatalError "Package '$_packageName' not available." 23
+        fi
+
+        return
+
+    fi
+
+    fatalError 'Package manager not available.' 24
+
+}
+
+
+# Subversion functions
+# --------------------------------------------------------------------------------
+function installSubversion() {
+
+    local _amazon_linux_svn_17
+    local _amazon_linux_svn_17_url
+
+    logInfo 'Installing Subversion...'
+
+    # if running on Amazon Linux and Subversion 1.7 is specified, then
+    # download it manually as not available via Amazon yum repository
+    if [ ! -z "$CM_AMAZON_LINUX" ] && [ "$CM_AMAZON_LINUX" -eq 1 ] && [ "$CM_VCS_SVN_VERSION" == "subversion-1.7" ]; then
+
+        logInfo "Performing Amazon-specific Subversion 1.7 install."
+
+        # details for manual download if Subversion 1.7 is configured
+        _amazon_linux_svn_17="$svn_version$amazon_linux_svn_17_sub_version.x86_64.rpm"
+        _amazon_linux_svn_17_url="$amazon_linux_svn_17_base_url/$_amazon_linux_svn_17"
+
+        # uninstall pre-installed Amazon subversion package
+
+        logInfo "Removing existing Subversion installation."
+        if [ "$verbose_mode" -eq 1 ]; then
+            yum -y remove subversion subversion-libs
+        else
+            yum -y remove subversion subversion-libs >>"$yum_log_path" 2>>"$yum_err_path"
+        fi
+
+        # check if already downloaded to avoid unnecessary download
+        logInfo "Checking for existing $svn_version installation."
+        if [ "$verbose_mode" -eq 1 ]; then
+            yum list installed "$svn_version"
+        else
+            yum list installed "$svn_version" >>"$yum_log_path" 2>>"$yum_err_path"
+        fi
+
+        if [ $? -eq 0 ]; then
+            logInfo "$svn_version already installed."
+        else
+            logInfo "Downloading $_amazon_linux_svn_17_url."
+            if [ "$verbose_mode" -eq 1 ]; then
+                wget "$_amazon_linux_svn_17_url" -P /tmp/
+            else
+                wget "$_amazon_linux_svn_17_url" -P /tmp/ >>"$yum_log_path" 2>>"$yum_err_path"
+            fi
+            if [ $? -ne 0 ]; then
+                fatalError "Error downloading Subversion 1.7 from $_amazon_linux_svn_17_url.", 26
+            fi
+            logInfo "Installing Subversion 1.7 from /tmp/$_amazon_linux_svn_17."
+            if [ "$verbose_mode" -eq 1 ]; then
+                yum -y install "/tmp/$_amazon_linux_svn_17"
+            else
+                yum -y install "/tmp/$_amazon_linux_svn_17" >>"$yum_log_path" 2>>"$yum_err_path"
+            fi
+            if [ $? -ne 0 ]; then
+                fatalError "Error installing Subversion 1.7 from /tmp/$_amazon_linux_svn_17.", 27
+            fi
+            rm -f "/tmp/$_amazon_linux_svn_17"
+        fi
+
+    else
+
+        installPackage "$svn_version"
+
+    fi
+
+}
+function subversionCheckFileExists {
+
+    local _svn_params
+    local _file=$1
+
+    logInfo "Checking for Subversion file: $_file (revision $CM_VCS_REVISION)"
+
+    if [ -z "$CM_VCS_USERNAME" ]; then
+        _svn_params=()
+    else
+        _svn_params=( --no-auth-cache --username "$CM_VCS_USERNAME" --password "$CM_VCS_PASSWORD" )
+    fi
+
+    # if using SSL with invalid certificate, need to run in interactive mode and pass 't' to accept invalid certificates
+    if [[ "$_file" =~ ^https\:\/\/.* ]] && [ "$CM_VCS_ACCEPT_INVALID_SSL" = "true" ]; then
+        if [ "$verbose_mode" -eq 1 ]; then
+            echo 't' | svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
+        else
+            echo 't' | svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >/dev/null 2>&1
+        fi
+    else
+        _svn_params+=('--non-interactive')
+        if [ "$verbose_mode" -eq 1 ]; then
+            svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
+        else
+            svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >/dev/null 2>&1
+        fi
+    fi
+
+}
+function subversionRetrieveFile {
+
+    local _svn_params
+    local _file=$1
+
+    logInfo "Retrieving Subversion file: $_file (revision $CM_VCS_REVISION)"
+
+    if [ -z "$CM_VCS_USERNAME" ]; then
+        _svn_params=()
+    else
+        _svn_params=( --no-auth-cache --username "$CM_VCS_USERNAME" --password "$CM_VCS_PASSWORD" )
+    fi
+
+    # if using SSL with invalid certificate, need to run in interactive mode and pass 't' to accept invalid certificates
+    if [[ "$_file" =~ ^https\:\/\/.* ]] && [ "$CM_VCS_ACCEPT_INVALID_SSL" = "true" ]; then
+        if [ "$verbose_mode" -eq 1 ]; then
+            echo 't' | svn export -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
+        else
+            echo 't' | svn export -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >>"$cmbootstrap_log_path" 2>/dev/null
+        fi
+    else
+        _svn_params+=('--non-interactive')
+        if [ "$verbose_mode" -eq 1 ]; then
+            svn export -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
+        else
+            svn export -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >>"$cmbootstrap_log_path" 2>>"$cmbootstrap_err_path"
+        fi
+    fi
+
+}
+
+
+# Git functions
+# --------------------------------------------------------------------------------
+function installGit() {
+
+    logInfo 'Installing Git...'
+
+    installPackage "$git_version"
+
+    # delete old Git clone path if it exists
+    rm -rf "$git_clone_tmp_path"
+
+}
+function gitCheckFileExists {
+
+    local _file=$1
+    local _file_local_path
+
+    gitClone
+
+    # build path to the file in the local repository clone
+    _file_local_path="${_file/$CM_VCS_REPO_BASE/$git_clone_tmp_path}"
+
+    logInfo "Checking for Git file: $_file_local_path"
+
+    ls "$_file_local_path" > /dev/null 2>&1
+
+}
+function gitRetrieveFile {
+
+    local _file=$1
+    local _file_local_path
+
+    gitClone
+
+    # build path to the file in the local repository clone
+    _file_local_path="${_file/$CM_VCS_REPO_BASE/$git_clone_tmp_path}"
+
+    cp "$_file_local_path" .
+
+}
+function gitClone {
+
+    local _git_repo_with_auth
+
+    # insert authentication details into the repository URL
+    if [ ! -z "$CM_VCS_USERNAME" ]; then
+        _git_repo_with_auth="${CM_VCS_REPO_BASE/https:\/\//https://$CM_VCS_USERNAME:$CM_VCS_PASSWORD@}"
+        _git_repo_with_auth="${_git_repo_with_auth/http:\/\//http://$CM_VCS_USERNAME:$CM_VCS_PASSWORD@}"
+    fi
+
+    # if the Git repository has not already been retrieved, clone it to the temporary location
+    if [ ! -d "$git_clone_tmp_path" ]; then
+        logInfo "Cloning Git repository $CM_VCS_REPO_BASE to $git_clone_tmp_path."
+        makeDirectory "$git_clone_tmp_path"
+        if [ "$verbose_mode" -eq 1 ]; then
+            git clone "${git_params[@]}" "$_git_repo_with_auth" "$git_clone_tmp_path"
+        else
+            git clone "${git_params[@]}" "$_git_repo_with_auth" "$git_clone_tmp_path" >>"$cmbootstrap_log_path" 2>&1
+        fi
+    fi
+}
+
+
+# Ansible functions
+# --------------------------------------------------------------------------------
+function installAnsible() {
+
+    # install Ansible
+    logInfo "Installing Ansible..."
+    installPackage "$ansible_version"
+
+    # remove example Ansible hosts file, which contains unwanted example
+    # hosts such as 'alpha.example.org', and replace with localhost only
+    rm "$ansible_hosts_file" 2>/dev/null
+    makeDirectory "$ansible_hosts_path"
+    echo "localhost" > "$ansible_hosts_file"
+
+}
+function ansibleRun {
+
+    if [ "$verbose_mode" -eq 1 ]; then
+        ansible-playbook --connection=local "$1"
+    else
+        ansible-playbook --connection=local "$1" >>"$ansible_log_path" 2>>"$ansible_err_path"
+    fi
+}
+
+
+# local configuration management file check function
+# --------------------------------------------------------------------------------
+function checkIfLocalCmFilesExist() {
+
+    if [ -f "$local_ansible_main_file" ]; then
+        return 1
+    else
+        return 0
+    fi
+
+}
+
+
+# utility functions
+# --------------------------------------------------------------------------------
+function cleanup() {
+
+    # delete Git temporary clone path if created
+    rm -rf "$git_clone_tmp_path"
+
+}
+function makeDirectory {
+    mkdir -p $1
+}
+function windowsToUnixFormat {
+    # remove any Windows newline characters from text file
+    tr -d '\r' <"$1" > "$1.tmp"
+    mv "$1.tmp" "$1"
+}
+
+
+# logging functions
+# --------------------------------------------------------------------------------
+function logInfo() {
+
+    local _message=$1
+
+    if [ "$verbose_mode" -eq 1 ]; then
+        echo "$_message"
+    else
+        echo "$_message" >> "$cmbootstrap_log_path"
+    fi
+
+}
+function logError() {
+
+    local _message=$1
+
+    if [ "$verbose_mode" -eq 1 ]; then
+        echo "ERROR: $_message"
+    else
+        echo "$_message" >>"$cmbootstrap_err_path"
+    fi
+
+}
+function fatalError() {
+
+    local _message=$1
+    local _exit_code=$2
+
+    cleanup
+
+    logError "$_message"
+    if [ "$verbose_mode" -ne 1 ]; then
+        echo "$_message"
+    fi
+    exit "$_exit_code"
+
+}
+
+
+# script compacting and escaping functions
+# --------------------------------------------------------------------------------
+
+# modify startup script by removing comments
+# and blank lines and reducing whitespace
+function createCompact() {
+
+    sed -e 's/^[[:space:]]*#[^#!].*$//' "$script_dir$0" | sed -E 's/[[:space:]]+/ /' | sed -E 's/^[[:space:]]+//' | sed -E 's/[[:space:]]+$//' | grep '\S' > "$script_dir$0.compact"
+    echo "'$script_dir$0' compacted to '$script_dir$0.compact'."
+}
+
+# modify startup script by escaping \\ to \, escaping "
+# to  \", and by replacing all new line characters with "\n"
+function createEscaped() {
+
+    createCompact
+
+    sed -e 's/\\/\\\\/g' "$script_dir$0.compact" | sed 's/\"/\\"/g' | sed -n -e 'H;${x;s/\n/\\n/g;p;}' > "$script_dir$0.escaped"
+
+}
+
+
+# main execution
+# --------------------------------------------------------------------------------
+args=("$@")
+configGeneral
+configPath
+init
+retrieveMetaData
+configTemp
+configVcs
+configCm
+configHostname
+installPrerequisites
+cmFetchFiles
+cmRunInitFile
+cmRunMainFile
+cleanup
