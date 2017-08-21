@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.69.
+## Version 1.2.70.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -30,7 +30,7 @@ ansible_config_file="config.yml"
 
 # general configuration
 # --------------------------------------------------------------------------------
-function configGeneral() {
+function _configGeneral() {
 
     local _verbose_arg="-"
     local _compact_arg="-c"
@@ -67,7 +67,7 @@ function configGeneral() {
 
 # path configuration
 # --------------------------------------------------------------------------------
-function configPath() {
+function _configPath() {
 
     script_dir=`dirname $0`
     cmbootstrap_dir=~/.cmbootstrap
@@ -87,7 +87,7 @@ function configPath() {
 
 # initialization
 # --------------------------------------------------------------------------------
-function init() {
+function _init() {
 
     # prepare directory structure
     makeDirectory "$cmbootstrap_dir"
@@ -109,7 +109,7 @@ function init() {
 
 # retrieve configuration management metadata
 # --------------------------------------------------------------------------------
-function retrieveMetaData() {
+function _retrieveMetaData() {
 
     local _cm_disabled
     local _mandatory
@@ -258,6 +258,8 @@ function retrieveMetaData() {
     CM_VCS_PASSWORD="$metaDataValue"
     getMetaData 'cm-vcs-revision'
     _vcs_revision="$metaDataValue"
+    getMetaData 'cm-vcs-branch'
+    _vcs_branch="$metaDataValue"
     # Company name is mandatory
     getMetaData 'cm-organization' _mandatory
     CM_ORGANIZATION="$metaDataValue"
@@ -295,11 +297,15 @@ function retrieveMetaData() {
         logInfo "Metadata cm-vcs-revision not defined, using '$default_vcs_revision' revision."
         CM_VCS_REVISION="$default_vcs_revision"
     else
-        # explicit revisions are only supported on Subversion
-        if [ "$CM_VCS_REPO_TYPE" != "Subversion" ]; then
-            fatalError 'Metadata cm-vcs-revision only supported with Subversion repositories.' 17
+        CM_VCS_REVISION="$_vcs_revision"
+    fi
+
+    if [ ! -z "$_vcs_branch" ]; then
+        # explicit branches are only supported with Git
+        if [ "$CM_VCS_REPO_TYPE" != "Git" ]; then
+            fatalError 'Metadata cm-vcs-branch only supported with Git repositories.' 17
         else
-            CM_VCS_REVISION="$_vcs_revision"
+            CM_VCS_BRANCH="$_vcs_branch"
         fi
     fi
 
@@ -472,7 +478,7 @@ function retrieveMetaData() {
 
 # temporary storage configuration
 # --------------------------------------------------------------------------------
-function configTemp() {
+function _configTemp() {
 
     # alternative temp directory can be passed in as a function parameter
     if [ -z "$CM_TMP_DIR" ]; then
@@ -495,14 +501,14 @@ function configTemp() {
 
 # version control configuration
 # --------------------------------------------------------------------------------
-function configVcs() {
+function _configVcs() {
 
     if [ "$CM_VCS_REPO_TYPE" = "Subversion" ]; then
         configSubversion
     elif [ "$CM_VCS_REPO_TYPE" = "Git" ]; then
         configGit
     else
-        fatalError "Invalid version control type '$CM_VCS_REPO_TYPE'.", 91
+        fatalError "Invalid version control type '$CM_VCS_REPO_TYPE'.", 21
     fi
 
 }
@@ -540,7 +546,7 @@ function configGit() {
 
 # configuration management configuration
 # --------------------------------------------------------------------------------
-function configCm() {
+function _configCm() {
 
     configAnsible
 
@@ -568,24 +574,9 @@ function configAnsible() {
 }
 
 
-# configuration file value retrieval
-# --------------------------------------------------------------------------------
-function readConfigFileValue() {
-
-    local _configName=$1
-
-    configValue=$(cat "$cmbootstrap_config_path" | grep "^$_configName\:" | awk -F':' '{ val = index($0,":");print substr($0,val+1)}')
-
-    if [ ! -z "$configValue" ]; then
-        logInfo "Config value $_configName='$configValue' retrieved."
-    fi
-
-}
-
-
 # hostname configuration
 # --------------------------------------------------------------------------------
-function configHostname() {
+function _configHostname() {
 
     # do nothing if "set hostname" not enabled
     if [ "$CM_SET_HOSTNAME" != "true" ]; then
@@ -602,7 +593,7 @@ function configHostname() {
     # check that hostnamectl command is installed and executable
     command -v hostnamectl >/dev/null 2>&1
     if [ $? -ne 0 ]; then
-        fatalError 'Unable to set hostname, hostnamectl command not available, terminating.' 21
+        fatalError 'Unable to set hostname, hostnamectl command not available, terminating.' 22
     fi
 
     # change the hostname
@@ -614,7 +605,7 @@ function configHostname() {
 
 # prerequisites install
 # --------------------------------------------------------------------------------
-function installPrerequisites() {
+function _installPrerequisites() {
 
     # install and prepare package management
     installPackageManagement
@@ -737,7 +728,7 @@ function installVersionControl() {
     elif [ "$CM_VCS_REPO_TYPE" = "Git" ]; then
         installGit
     else
-        fatalError "Invalid version control type '$CM_VCS_REPO_TYPE'.", 92
+        fatalError "Invalid version control type '$CM_VCS_REPO_TYPE'.", 31
     fi
 
 }
@@ -745,7 +736,7 @@ function installVersionControl() {
 
 # fetch configuration management files
 # --------------------------------------------------------------------------------
-function cmFetchFiles() {
+function _fetchFiles() {
 
     # use local files if available - used during configuration management development
     checkIfLocalCmFilesExist
@@ -834,7 +825,7 @@ function cmFetchStartupFiles() {
         else
             # the following condition may occur either because the configuration management
             # files do not exist, or because of an invalid version control configuration
-            fatalError 'Type generic configuration management file not available, terminating.' 31
+            fatalError 'Type generic configuration management file not available, terminating.' 41
         fi
 
     fi
@@ -845,7 +836,7 @@ function cmFetchStartupFiles() {
 
     # check the configuration management file now exists locally
     if [ ! -f "$vcs_local_path/$ansible_main_file" ]; then
-        fatalError 'Unable to retrieve configuration management file, terminating.' 32
+        fatalError 'Unable to retrieve configuration management file, terminating.' 42
     fi
 
 }
@@ -853,7 +844,7 @@ function cmFetchStartupFiles() {
 
 # run configuration management initialization file
 # --------------------------------------------------------------------------------
-function cmRunInitFile() {
+function _runInitFile() {
 
     local _cmPath
     local _errorCode
@@ -885,7 +876,7 @@ function vcsCheckFileExists() {
     elif [ "$CM_VCS_REPO_TYPE" = "Git" ]; then
         gitCheckFileExists $1
     else
-        fatalError "Invalid version control type '$CM_VCS_REPO_TYPE'.", 93
+        fatalError "Invalid version control type '$CM_VCS_REPO_TYPE'.", 51
     fi
 
 }
@@ -896,7 +887,7 @@ function vcsRetrieveFile() {
     elif [ "$CM_VCS_REPO_TYPE" = "Git" ]; then
         gitRetrieveFile $1
     else
-        fatalError "Invalid version control type '$CM_VCS_REPO_TYPE'.", 94
+        fatalError "Invalid version control type '$CM_VCS_REPO_TYPE'.", 52
     fi
 
 }
@@ -904,7 +895,7 @@ function vcsRetrieveFile() {
 
 # run main configuration management file
 # --------------------------------------------------------------------------------
-function cmRunMainFile() {
+function _runMainFile() {
 
     local _cmPath
     local _message
@@ -1035,7 +1026,7 @@ function getMetaDataGoogleComputeEngine() {
 
         # terminate if parameter was marked as mandatory
 		if [ "$_mandatory" = "1" ]; then
-			fatalError "Error retrieving '$_metaDataName' mandatory metadata value from Google Compute Engine, terminating." 41
+			fatalError "Error retrieving '$_metaDataName' mandatory metadata value from Google Compute Engine, terminating." 61
 		fi
 
     elif [ ! -z "$metaDataValue" ]; then
@@ -1065,7 +1056,7 @@ function getMetaDataVMware() {
 
 		# terminate if parameter was marked as mandatory
 		if [ "$_mandatory" = 1 ]; then
-			fatalError "Error retrieving '$_metaDataName' mandatory metadata value from VMware config, terminating." 42
+			fatalError "Error retrieving '$_metaDataName' mandatory metadata value from VMware config, terminating." 62
 		fi
 
     elif [ ! -z "$metaDataValue" ]; then
@@ -1090,7 +1081,7 @@ function getMetaDataVirtualBox() {
 
 		# terminate if parameter was marked as mandatory
 		if [ "$_mandatory" = 1 ]; then
-			fatalError "Error retrieving '$_metaDataName' mandatory metadata value from VirtualBox config, terminating." 43
+			fatalError "Error retrieving '$_metaDataName' mandatory metadata value from VirtualBox config, terminating." 63
 		fi
 
 	else
@@ -1142,7 +1133,7 @@ function getMetaDataAmazonEC2() {
 
         # terminate if parameter was marked as mandatory
 		if [ "$_mandatory" = "1" ]; then
-            fatalError 'Error retrieving user data from Amazon EC2, terminating.' 44
+            fatalError 'Error retrieving user data from Amazon EC2, terminating.' 64
 		fi
 
     else
@@ -1318,7 +1309,7 @@ function installPackage() {
     local _packageName=$1
 
     if [ -z "$_packageName" ]; then
-        fatalError 'Package name not provided.' 94
+        fatalError 'Package name not provided.' 71
     fi
 
     # check if yum command is installed and executable
@@ -1336,7 +1327,7 @@ function installPackage() {
 
         # terminate if package not available
         if [ ! $? -eq 0 ]; then
-            fatalError "Package '$_packageName' not available." 22
+            fatalError "Package '$_packageName' not available." 72
         fi
 
         return
@@ -1354,14 +1345,14 @@ function installPackage() {
 
         # terminate if package not available
         if [ ! $? -eq 0 ]; then
-            fatalError "Package '$_packageName' not available." 23
+            fatalError "Package '$_packageName' not available." 73
         fi
 
         return
 
     fi
 
-    fatalError 'Package manager not available.' 24
+    fatalError 'Package manager not available.' 74
 
 }
 
@@ -1412,7 +1403,7 @@ function installSubversion() {
                 wget "$_amazon_linux_svn_17_url" -P /tmp/ >>"$yum_log_path" 2>>"$yum_err_path"
             fi
             if [ $? -ne 0 ]; then
-                fatalError "Error downloading Subversion 1.7 from $_amazon_linux_svn_17_url.", 26
+                fatalError "Error downloading Subversion 1.7 from $_amazon_linux_svn_17_url.", 81
             fi
             logInfo "Installing Subversion 1.7 from /tmp/$_amazon_linux_svn_17."
             if [ "$verbose_mode" -eq 1 ]; then
@@ -1421,7 +1412,7 @@ function installSubversion() {
                 yum -y install "/tmp/$_amazon_linux_svn_17" >>"$yum_log_path" 2>>"$yum_err_path"
             fi
             if [ $? -ne 0 ]; then
-                fatalError "Error installing Subversion 1.7 from /tmp/$_amazon_linux_svn_17.", 27
+                fatalError "Error installing Subversion 1.7 from /tmp/$_amazon_linux_svn_17.", 82
             fi
             rm -f "/tmp/$_amazon_linux_svn_17"
         fi
@@ -1448,12 +1439,14 @@ function subversionCheckFileExists {
 
     # if using SSL with invalid certificate, need to run in interactive mode and pass 't' to accept invalid certificates
     if [[ "$_file" =~ ^https\:\/\/.* ]] && [ "$CM_VCS_ACCEPT_INVALID_SSL" = "true" ]; then
+        echo "ALLOWING INVALID SSL..."
         if [ "$verbose_mode" -eq 1 ]; then
             echo 't' | svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
         else
             echo 't' | svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >/dev/null 2>&1
         fi
     else
+        echo "DEFAULT SSL..."
         _svn_params+=('--non-interactive')
         if [ "$verbose_mode" -eq 1 ]; then
             svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
@@ -1538,6 +1531,21 @@ function gitRetrieveFile {
 function gitClone {
 
     local _git_repo_with_auth
+    local _git_additional_params
+
+    if [ -d "$git_clone_tmp_path" ]; then
+        return
+    fi
+
+    # additional GIT parameters to perform shallowest possible clone
+    if [ ! -z "$CM_VCS_BRANCH" ]; then
+        logInfo "Cloning Git branch '$CM_VCS_BRANCH'"
+        _git_additional_params=( --branch "$CM_VCS_BRANCH" )
+    fi
+    if [ "$CM_VCS_REVISION" = "$default_vcs_revision" ]; then
+        logInfo "Performing shallow (depth 1) Git clone"
+        _git_additional_params+=( --depth 1 )
+    fi
 
     # insert authentication details into the repository URL
     if [ ! -z "$CM_VCS_USERNAME" ]; then
@@ -1550,11 +1558,20 @@ function gitClone {
         logInfo "Cloning Git repository $CM_VCS_REPO_BASE to $git_clone_tmp_path."
         makeDirectory "$git_clone_tmp_path"
         if [ "$verbose_mode" -eq 1 ]; then
-            git clone "${git_params[@]}" "$_git_repo_with_auth" "$git_clone_tmp_path"
+            git clone "${git_params[@]}" "${_git_additional_params[@]}" "$_git_repo_with_auth" "$git_clone_tmp_path/"
         else
-            git clone "${git_params[@]}" "$_git_repo_with_auth" "$git_clone_tmp_path" >>"$cmbootstrap_log_path" 2>&1
+            git clone "${git_params[@]}" "${_git_additional_params[@]}" "$_git_repo_with_auth" "$git_clone_tmp_path/" >>"$cmbootstrap_log_path" 2>&1
         fi
     fi
+    if [ $? -ne 0 ]; then
+        fatalError 'Error cloning Git repository, terminating.' 91
+    fi
+
+    if [ "$CM_VCS_REVISION" != "$default_vcs_revision" ]; then
+        logInfo "Switching '$git_clone_tmp_path' to revision '$CM_VCS_REVISION'."
+        git -C "$git_clone_tmp_path" checkout "$CM_VCS_REVISION"
+    fi
+
 }
 
 
@@ -1596,9 +1613,24 @@ function checkIfLocalCmFilesExist() {
 }
 
 
+# configuration file value retrieval
+# --------------------------------------------------------------------------------
+function readConfigFileValue() {
+
+    local _configName=$1
+
+    configValue=$(cat "$cmbootstrap_config_path" | grep "^$_configName\:" | awk -F':' '{ val = index($0,":");print substr($0,val+1)}')
+
+    if [ ! -z "$configValue" ]; then
+        logInfo "Config value $_configName='$configValue' retrieved."
+    fi
+
+}
+
+
 # utility functions
 # --------------------------------------------------------------------------------
-function cleanup() {
+function _cleanup() {
 
     # delete Git temporary clone path if created
     rm -rf "$git_clone_tmp_path"
@@ -1643,7 +1675,7 @@ function fatalError() {
     local _message=$1
     local _exit_code=$2
 
-    cleanup
+    _cleanup
 
     logError "$_message"
     if [ "$verbose_mode" -ne 1 ]; then
@@ -1679,16 +1711,16 @@ function createEscaped() {
 # main execution
 # --------------------------------------------------------------------------------
 args=("$@")
-configGeneral
-configPath
-init
-retrieveMetaData
-configTemp
-configVcs
-configCm
-configHostname
-installPrerequisites
-cmFetchFiles
-cmRunInitFile
-cmRunMainFile
-cleanup
+_configGeneral
+_configPath
+_init
+_retrieveMetaData
+_configTemp
+_configVcs
+_configCm
+_configHostname
+_installPrerequisites
+_fetchFiles
+_runInitFile
+_runMainFile
+_cleanup
