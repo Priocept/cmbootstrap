@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.70.
+## Version 1.2.71.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -301,12 +301,7 @@ function _retrieveMetaData() {
     fi
 
     if [ ! -z "$_vcs_branch" ]; then
-        # explicit branches are only supported with Git
-        if [ "$CM_VCS_REPO_TYPE" != "Git" ]; then
-            fatalError 'Metadata cm-vcs-branch only supported with Git repositories.' 17
-        else
-            CM_VCS_BRANCH="$_vcs_branch"
-        fi
+        CM_VCS_BRANCH="$_vcs_branch"
     fi
 
     # if HTTP proxy was specified but yum proxy was not
