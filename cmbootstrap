@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.71.
+## Version 1.2.72.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -26,7 +26,8 @@ amazon_ec2_metadata_cmd="/opt/aws/bin/ec2-metadata"
 ansible_main_file="main.yml"
 ansible_init_file="init.yml"
 ansible_config_file="config.yml"
-
+git_tmp_path=".cm_git"
+local_cm_dirname="cmbootstrap"
 
 # general configuration
 # --------------------------------------------------------------------------------
@@ -79,8 +80,8 @@ function _configPath() {
     cmbootstrap_old_dir="$cmbootstrap_dir/_old"
     vcs_local_path="$cmbootstrap_dir/vcs"
     success_path="$cmbootstrap_dir/.success"
-    yum_log_path="$cmbootstrap_dir/yum.log.$timestamp"
-    yum_err_path="$cmbootstrap_dir/yum.err.$timestamp"
+    packages_log_path="$cmbootstrap_dir/packages.log.$timestamp"
+    packages_err_path="$cmbootstrap_dir/packages.err.$timestamp"
 
 }
 
@@ -484,8 +485,8 @@ function _configTemp() {
 
     makeDirectory "$tmp_dir"
 
-    local_cm_dir="$tmp_dir/cmbootstrap"
-    git_clone_tmp_path="$tmp_dir/.cm_git"
+    local_cm_dir="$tmp_dir/$local_cm_dirname"
+    git_clone_tmp_path="$tmp_dir/$git_tmp_path"
 
     # set TMPDIR environment variable to control download
     # location used by Ansible get_url module
@@ -637,8 +638,8 @@ function installPackageManagement() {
             yum-config-manager --enable epel/x86_64
         else
             # ensure EPEL repository is enabled - disabled by default on Amazon Linux
-            yum-config-manager --enable epel/x86_64 >>"$yum_log_path" 2>>"$yum_err_path"
-            yum-complete-transaction >>"$yum_log_path" 2>>"$yum_err_path"
+            yum-config-manager --enable epel/x86_64 >>"$packages_log_path" 2>>"$packages_err_path"
+            yum-complete-transaction >>"$packages_log_path" 2>>"$packages_err_path"
         fi
 
         # EPEL packages only apply for CentOS/yum
@@ -1317,7 +1318,7 @@ function installPackage() {
         if [ "$verbose_mode" -eq 1 ]; then
             yum -y install "$_packageName"
         else
-            yum -y install "$_packageName" >>"$yum_log_path" 2>>"$yum_err_path"
+            yum -y install "$_packageName" >>"$packages_log_path" 2>>"$packages_err_path"
         fi
 
         # terminate if package not available
@@ -1335,7 +1336,7 @@ function installPackage() {
         if [ "$verbose_mode" -eq 1 ]; then
             apt-get -y install "$_packageName"
         else
-            apt-get -y install "$_packageName" >>"$yum_log_path" 2>>"$yum_err_path"
+            apt-get -y install "$_packageName" >>"$packages_log_path" 2>>"$packages_err_path"
         fi
 
         # terminate if package not available
@@ -1377,7 +1378,7 @@ function installSubversion() {
         if [ "$verbose_mode" -eq 1 ]; then
             yum -y remove subversion subversion-libs
         else
-            yum -y remove subversion subversion-libs >>"$yum_log_path" 2>>"$yum_err_path"
+            yum -y remove subversion subversion-libs >>"$packages_log_path" 2>>"$packages_err_path"
         fi
 
         # check if already downloaded to avoid unnecessary download
@@ -1385,7 +1386,7 @@ function installSubversion() {
         if [ "$verbose_mode" -eq 1 ]; then
             yum list installed "$svn_version"
         else
-            yum list installed "$svn_version" >>"$yum_log_path" 2>>"$yum_err_path"
+            yum list installed "$svn_version" >>"$packages_log_path" 2>>"$packages_err_path"
         fi
 
         if [ $? -eq 0 ]; then
@@ -1395,7 +1396,7 @@ function installSubversion() {
             if [ "$verbose_mode" -eq 1 ]; then
                 wget "$_amazon_linux_svn_17_url" -P /tmp/
             else
-                wget "$_amazon_linux_svn_17_url" -P /tmp/ >>"$yum_log_path" 2>>"$yum_err_path"
+                wget "$_amazon_linux_svn_17_url" -P /tmp/ >>"$packages_log_path" 2>>"$packages_err_path"
             fi
             if [ $? -ne 0 ]; then
                 fatalError "Error downloading Subversion 1.7 from $_amazon_linux_svn_17_url.", 81
@@ -1404,7 +1405,7 @@ function installSubversion() {
             if [ "$verbose_mode" -eq 1 ]; then
                 yum -y install "/tmp/$_amazon_linux_svn_17"
             else
-                yum -y install "/tmp/$_amazon_linux_svn_17" >>"$yum_log_path" 2>>"$yum_err_path"
+                yum -y install "/tmp/$_amazon_linux_svn_17" >>"$packages_log_path" 2>>"$packages_err_path"
             fi
             if [ $? -ne 0 ]; then
                 fatalError "Error installing Subversion 1.7 from /tmp/$_amazon_linux_svn_17.", 82
@@ -1434,14 +1435,12 @@ function subversionCheckFileExists {
 
     # if using SSL with invalid certificate, need to run in interactive mode and pass 't' to accept invalid certificates
     if [[ "$_file" =~ ^https\:\/\/.* ]] && [ "$CM_VCS_ACCEPT_INVALID_SSL" = "true" ]; then
-        echo "ALLOWING INVALID SSL..."
         if [ "$verbose_mode" -eq 1 ]; then
             echo 't' | svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
         else
             echo 't' | svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >/dev/null 2>&1
         fi
     else
-        echo "DEFAULT SSL..."
         _svn_params+=('--non-interactive')
         if [ "$verbose_mode" -eq 1 ]; then
             svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
@@ -1566,6 +1565,10 @@ function gitClone {
         logInfo "Switching '$git_clone_tmp_path' to revision '$CM_VCS_REVISION'."
         git -C "$git_clone_tmp_path" checkout "$CM_VCS_REVISION"
     fi
+
+    # export Git clone path
+    CM_VCS_GIT_CLONE_PATH="$git_clone_tmp_path"
+    export CM_VCS_GIT_CLONE_PATH
 
 }
 
@@ -1719,3 +1722,4 @@ _fetchFiles
 _runInitFile
 _runMainFile
 _cleanup
+
