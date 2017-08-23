@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.74.
+## Version 1.2.75.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -1569,8 +1569,8 @@ function gitClone {
     fi
 
     # export Git clone path
-    CM_VCS_GIT_CLONE_PATH="$git_clone_tmp_path"
-    export CM_VCS_GIT_CLONE_PATH
+    CM_VCS_GIT_CLONE_DIR="$git_clone_tmp_path"
+    export CM_VCS_GIT_CLONE_DIR
 
 }
 
