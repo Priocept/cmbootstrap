@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.73.
+## Version 1.2.74.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -13,7 +13,6 @@
 
 # configuration constants
 default_vcs_revision="HEAD"
-default_tmp_dir="/tmp"
 default_tmp_dir="/tmp"
 default_svn_version="subversion"
 default_git_version="git"
