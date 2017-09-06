@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.75.
+## Version 1.2.76.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -739,10 +739,10 @@ function _fetchFiles() {
     # use local files if available - used during configuration management development
     checkIfLocalCmFilesExist
     if [ "$?" -eq 1 ]; then
-        logInfo "Local configuration management found, skipping fetch from version control."
+        logInfo "Local configuration management files found, skipping fetch from version control."
         return
     else
-        logInfo "Local configuration management not found, fetching from version control."
+        logInfo "Local configuration management files not found, fetching from version control."
     fi
 
     cmFetchStartupFiles
@@ -840,26 +840,37 @@ function cmFetchStartupFiles() {
 }
 
 
-# run configuration management initialization file
+# run configuration management initialization file - this file is executed before
+# the main configuration management file, which may be dependent on steps that are
+# performed by the initialization file
 # --------------------------------------------------------------------------------
 function _runInitFile() {
 
     local _cmPath
     local _errorCode
 
-    # if a configuration management initialization file was found, execute it
-    # first, as it maybe be fetching further files on which the main configuration
-    # management file is dependent
-    _cmPath="$vcs_local_dir/$ansible_init_file"
-    if [ -f "$_cmPath" ]; then
-        logInfo "Executing configuration management initialization file $_cmPath."
-        cmRun "$_cmPath"
-        _errorCode=$?
-        if [ "$_errorCode" != 0 ]; then
-            fatalError "Configuration management '$_cmPath' failed." "$_errorCode"
-        else
-            logInfo 'Configuration management initialization complete.'
-        fi
+    # use local file if available - used for configuration management development
+    checkIfLocalCmInitFileExists
+    if [ $? -eq 1 ]; then
+        _cmPath="$local_ansible_init_file"
+        _message="Executing local configuration management init file $_cmPath."
+        # update CM_VCS_LOCAL_DIR to point to local cm directory if in use
+        export CM_VCS_LOCAL_DIR="$local_cm_dir"
+    else
+        _cmPath="$vcs_local_dir/$ansible_init_file"
+        _message="Executing configuration management init file $_cmPath."
+    fi
+    logInfo "$_message"
+    if [ "$verbose_mode" -ne 1 ]; then
+        echo "$_message" >>"$ansible_log_path"
+    fi
+
+    cmRun "$_cmPath"
+    _errorCode=$?
+    if [ "$_errorCode" != 0 ]; then
+        fatalError "Configuration management '$_cmPath' failed." "$_errorCode"
+    else
+        logInfo 'Configuration management initialization complete.'
     fi
 
 }
@@ -899,11 +910,13 @@ function _runMainFile() {
     local _message
     local _errorCode
 
-    # use local files if available - used for configuration management development
-    checkIfLocalCmFilesExist
+    # use local file if available - used for configuration management development
+    checkIfLocalCmMainFileExists
     if [ $? -eq 1 ]; then
         _cmPath="$local_ansible_main_file"
         _message="Executing local configuration management file $_cmPath."
+        # update CM_VCS_LOCAL_DIR to point to local cm directory if in use
+        export CM_VCS_LOCAL_DIR="$local_cm_dir"
     else
         _cmPath="$vcs_local_dir/$ansible_main_file"
         _message="Executing main configuration management file $_cmPath."
@@ -1600,9 +1613,18 @@ function ansibleRun {
 }
 
 
-# local configuration management file check function
+# local configuration management file check functions
 # --------------------------------------------------------------------------------
-function checkIfLocalCmFilesExist() {
+function checkIfLocalCmInitFileExists() {
+
+    if [ -f "$local_ansible_init_file" ]; then
+        return 1
+    else
+        return 0
+    fi
+
+}
+function checkIfLocalCmMainFileExists() {
 
     if [ -f "$local_ansible_main_file" ]; then
         return 1
@@ -1611,9 +1633,23 @@ function checkIfLocalCmFilesExist() {
     fi
 
 }
+function checkIfLocalCmFilesExist() {
+
+    # is either a init or main file is found locally, then
+    # consider local files to exist
+    checkIfLocalCmInitFileExists
+    if [ $? -eq 1 ]; then
+        return 1
+    fi
+    checkIfLocalCmMainFileExists
+    if [ $? -eq 1 ]; then
+        return 1
+    fi
+
+}
 
 
-# configuration file value retrieval
+}# configuration file value retrieval
 # --------------------------------------------------------------------------------
 function readConfigFileValue() {
 
@@ -1724,4 +1760,3 @@ _fetchFiles
 _runInitFile
 _runMainFile
 _cleanup
-
