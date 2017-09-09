@@ -1645,7 +1645,7 @@ function checkIfLocalCmFilesExist() {
 }
 
 
-}# configuration file value retrieval
+# configuration file value retrieval
 # --------------------------------------------------------------------------------
 function readConfigFileValue() {
 
