@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.76.
+## Version 1.2.77.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -1026,11 +1026,7 @@ function getMetaDataGoogleComputeEngine() {
     local _metaDataName=$1
     local _mandatory=$2
 
-    if [ "$verbose_mode" -eq 1 ]; then
-        metaDataValue=$(curl --fail --header "$gce_metadata_header" "$gce_metadata_url/attributes/$_metaDataName")
-    else
-        metaDataValue=$(curl --fail --header "$gce_metadata_header" "$gce_metadata_url/attributes/$_metaDataName") 2>>"$cmbootstrap_err_path"
-    fi
+    metaDataValue=$(curl --fail --header "$gce_metadata_header" "$gce_metadata_url/attributes/$_metaDataName" 2>/dev/null)
     if [ $? -ne 0 ]; then
 
         metaDataValue=''
