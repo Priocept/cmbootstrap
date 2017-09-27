@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.78.
+## Version 1.2.79.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -667,7 +667,7 @@ function installPackageManagement() {
             return
         fi
 
-        while fuser '/var/lib/dpkg/lock' >/dev/null 2>&1; do
+        while fuser '/var/lib/dpkg' >/dev/null 2>&1; do
             echo "Waiting for lock..."
             sleep 5
         done
