@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.77.
+## Version 1.2.78.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -354,8 +354,12 @@ function _retrieveMetaData() {
     # terminate if configuration management has previously
     # completed successfully, unless "run once" is disabled
     if [ "$run_once" != "false" ] && [ -e "$success_path" ]; then
-        logInfo 'Configuration management successfully completed previously.'
-        exit 0;
+        # only terminate if not using local files
+        checkIfLocalCmFilesExist
+        if [ "$?" -ne 1 ]; then
+            logInfo 'Configuration management successfully completed previously.'
+            exit 0;
+        fi
     fi
 
     # export metadata variables to make accessible by subsequent scripts
@@ -650,6 +654,26 @@ function installPackageManagement() {
 
     fi
 
+    # check if apt-get installed and executable
+    command -v apt-get >/dev/null 2>&1
+
+    # wait for dpkg locks if apt-get is installed
+    if [ $? -eq 0 ]; then
+
+        logInfo "Waiting for dpkg locks..."
+        command -v fuser >/dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            logInfo "fuser not available."
+            return
+        fi
+
+        while fuser '/var/lib/dpkg/lock' >/dev/null 2>&1; do
+            echo "Waiting for lock..."
+            sleep 5
+        done
+
+    fi
+
 }
 
 
@@ -865,12 +889,16 @@ function _runInitFile() {
         echo "$_message" >>"$ansible_log_path"
     fi
 
-    cmRun "$_cmPath"
-    _errorCode=$?
-    if [ "$_errorCode" != 0 ]; then
-        fatalError "Configuration management '$_cmPath' failed." "$_errorCode"
+    if [ -f "$_cmPath" ]; then
+        cmRun "$_cmPath"
+        _errorCode=$?
+        if [ "$_errorCode" != 0 ]; then
+            fatalError "Configuration management '$_cmPath' failed." "$_errorCode"
+        else
+            logInfo 'Configuration management initialization complete.'
+        fi
     else
-        logInfo 'Configuration management initialization complete.'
+        logInfo 'Configuration management initialization file not found.'
     fi
 
 }
