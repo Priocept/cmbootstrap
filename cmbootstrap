@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.80.
+## Version 1.2.81.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -643,9 +643,9 @@ function installPackageManagement() {
             # ensure EPEL repository is enabled - disabled by default on Amazon Linux
             yum-config-manager --enable epel/x86_64
         else
+            yum-complete-transaction >>"$packages_log_path" 2>>"$packages_err_path"
             # ensure EPEL repository is enabled - disabled by default on Amazon Linux
             yum-config-manager --enable epel/x86_64 >>"$packages_log_path" 2>>"$packages_err_path"
-            yum-complete-transaction >>"$packages_log_path" 2>>"$packages_err_path"
         fi
 
         # EPEL packages only apply for CentOS/yum
@@ -667,7 +667,7 @@ function installPackageManagement() {
             return
         fi
 
-        while fuser '/var/lib/dpkg' >/dev/null 2>&1; do
+        while fuser '/var/lib/dpkg/lock' >/dev/null 2>&1; do
             logInfo "Waiting for lock..."
             sleep 5
         done
