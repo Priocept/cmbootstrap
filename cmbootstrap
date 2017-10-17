@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.81.
+## Version 1.2.82.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -59,6 +59,10 @@ function _configGeneral() {
     # pre-declaration of global variables
     configValue=''
     metaDataValue=''
+    cm_disable_labeling_reported=''
+    last_instance_label_set=''
+    gcp_instance_name=''
+    gcp_zone=''
     getAmazonEC2Tag_EnvironmentError=''
     getAmazonEC2Tag_Error=''
     ec2TagValue=''
@@ -121,7 +125,7 @@ function _retrieveMetaData() {
     local _http_proxy
     local _https_proxy
 
-    # initialize platform detection variables
+    # initialize variables
     CM_GOOGLE_COMPUTE_ENGINE=''
     CM_AMAZON_EC2=''
     CM_AMAZON_LINUX=''
@@ -169,16 +173,25 @@ function _retrieveMetaData() {
         CM_HTTPS_PROXY="$configValue"
         readConfigFileValue 'cm-tmp-dir'
         CM_TMP_DIR="$configValue"
+        readConfigFileValue 'cm-disable-labeling'
+        CM_DISABLE_LABELING="$configValue"
     else
         logInfo 'Configuration file not found.'
+    fi
+
+    # configure temporary directory if specified in config file
+    if [ ! -z "$CM_TMP_DIR" ]; then
+        configTemp
     fi
 
     # none of the metadata is mandatory if using
     # local configuration management files
     checkIfLocalCmFilesExist
     if [ "$?" -eq 1 ]; then
+        logInfo "Local configuration management files found, metadata not mandatory."
         _mandatory=0
     else
+        logInfo "Local configuration management files not found, metadata mandatory."
         _mandatory=1
     fi
 
@@ -249,6 +262,11 @@ function _retrieveMetaData() {
     if [ -z "$CM_TMP_DIR" ]; then
         getMetaData 'cm-tmp-dir'
         CM_TMP_DIR="$metaDataValue"
+        configTemp
+    fi
+    if [ -z "$CM_DISABLE_LABELING" ]; then
+        getMetaData 'cm-disable-labeling'
+        CM_DISABLE_LABELING="$metaDataValue"
     fi
     getMetaData 'cm-vcs-username'
     CM_VCS_USERNAME="$metaDataValue"
@@ -358,6 +376,7 @@ function _retrieveMetaData() {
         checkIfLocalCmFilesExist
         if [ "$?" -ne 1 ]; then
             logInfo 'Configuration management successfully completed previously.'
+            addInstanceLabel 'cmbootstrap-completed-previously'
             exit 0;
         fi
     fi
@@ -480,7 +499,7 @@ function _retrieveMetaData() {
 
 # temporary storage configuration
 # --------------------------------------------------------------------------------
-function _configTemp() {
+function configTemp() {
 
     # alternative temp directory can be passed in as a function parameter
     if [ -z "$CM_TMP_DIR" ]; then
@@ -490,9 +509,8 @@ function _configTemp() {
     fi
 
     makeDirectory "$tmp_dir"
-
-    local_cm_dir="$tmp_dir/$local_cm_dirname"
     git_clone_tmp_path="$tmp_dir/$git_tmp_path"
+    configLocalCm
 
     # set TMPDIR environment variable to control download
     # location used by Ansible get_url module
@@ -566,8 +584,6 @@ function configAnsible() {
         ansible_version="$CM_ANSIBLE_VERSION"
     fi
 
-    local_ansible_main_file="$local_cm_dir/$ansible_main_file"
-    local_ansible_init_file="$local_cm_dir/$ansible_init_file"
     ansible_log_path="$cmbootstrap_dir/ansible.log.$timestamp"
     ansible_err_path="$cmbootstrap_dir/ansible.err.$timestamp"
     ansible_hosts_path="/etc/ansible"
@@ -575,6 +591,15 @@ function configAnsible() {
 
 }
 
+
+# Local configuration management configuration
+# --------------------------------------------------------------------------------
+function configLocalCm() {
+
+    local_cm_dir="$tmp_dir/$local_cm_dirname"
+    local_ansible_main_file="$local_cm_dir/$ansible_main_file"
+    local_ansible_init_file="$local_cm_dir/$ansible_init_file"
+}
 
 # hostname configuration
 # --------------------------------------------------------------------------------
@@ -1020,10 +1045,10 @@ function getMetaData() {
     # detect VMware instance
     checkVMwareAvailable
     if [ $? -eq 0 ]; then
-        CM_VMWARE=1
         if [ -z "$CM_VMWARE" ]; then
             logInfo "VMware detected."
         fi
+        CM_VMWARE=1
         getMetaDataVMware "$_metaDataName" "$_mandatory"
         return
     fi
@@ -1043,6 +1068,52 @@ function getMetaData() {
 
     # finally attempt to retrieve metadata via environment variables
     getMetaDataEnvironment "$_metaDataName" "$_mandatory"
+
+}
+
+# generic (auto-detecting) labeling functions
+# --------------------------------------------------------------------------------
+function addInstanceLabel() {
+
+    local _labelName=$1
+
+    if [ "$CM_DISABLE_LABELING" = "true" ]; then
+        if [ -z "$cm_disable_labeling_reported" ]; then
+            logInfo "Instance labeling disabled."
+        fi
+        cm_disable_labeling_reported=1
+        return
+    fi
+
+    # detect Google Compute Engine instance
+    checkGoogleComputeAvailable
+    if [ $? -eq 0 ]; then
+        addInstanceLabelGoogleComputeEngine "$_labelName"
+        if [ $? -eq 0 ]; then
+            # remove last label if recorded
+            if [ ! -z "$last_instance_label_set"  ]; then
+                logInfo "Removing instance label '$last_instance_label_set'..."
+                removeInstanceLabel "$last_instance_label_set"
+            fi
+            last_instance_label_set="$_labelName"
+        fi
+    else
+        return
+    fi
+
+}
+function removeInstanceLabel() {
+
+    local _labelName=$1
+    local _ignoreMissing=$2
+
+    # detect Google Compute Engine instance
+    checkGoogleComputeAvailable
+    if [ $? -eq 0 ]; then
+        removeInstanceLabelGoogleComputeEngine "$_labelName" "$_ignoreMissing"
+    else
+        return
+    fi
 
 }
 
@@ -1066,6 +1137,63 @@ function getMetaDataGoogleComputeEngine() {
 
     elif [ ! -z "$metaDataValue" ]; then
     	logInfo "Metadata $_metaDataName='$metaDataValue' retrieved."
+    fi
+
+}
+
+
+# Google Compute Engine labelling functions
+# --------------------------------------------------------------------------------
+function addInstanceLabelGoogleComputeEngine() {
+
+    local _labelName=$1
+    local _deleteLabelName=$1
+    local _instanceName
+    local _zone
+
+    if [ -z "$gcp_instance_name" ]; then
+        logInfo "Retrieving GCP instance name..."
+        gcp_instance_name=$(curl --fail --header "$gce_metadata_header" "$gce_metadata_url/hostname" 2>/dev/null  | cut -d. -f1)
+    fi
+    if [ $? -ne 0 ] || [ -z  "$gcp_instance_name" ]; then
+        logInfo "Error retrieving Google Compute Engine instance name."
+        return
+    fi
+    if [ -z "$gcp_zone" ]; then
+        gcp_zone=$(curl --fail --header "$gce_metadata_header" "$gce_metadata_url/zone" 2>/dev/null  | cut -d. -f1)
+    fi
+    if [ $? -ne 0 ] || [ -z  "$gcp_zone" ]; then
+        logInfo "Error retrieving Google Compute Engine zone."
+        return
+    fi
+
+    logInfo "Adding Google Compute Engine label '$_labelName'..."
+    gcloud compute instances add-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName="
+    if [ $? -ne 0 ]; then
+        logInfo "Unable to add Google Compute Engine label '$_labelName'."
+    else
+        logInfo "Google Compute Engine label '$_labelName' added."
+    fi
+
+}
+function removeInstanceLabelGoogleComputeEngine() {
+
+    local _labelName=$1
+    local _ignoreMissing=$2
+
+    logInfo "Removing Google Compute Engine label '$_labelName'..."
+    if [ ! -z "$_ignoreMissing" ] && [ "$_ignoreMissing" -eq 1 ]; then
+        gcloud compute instances remove-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName" 2>/dev/null
+        if [ $? -eq 0 ]; then
+            logInfo "Google Compute Engine label '$_labelName' removed."
+        fi
+    else
+        gcloud compute instances remove-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName"
+        if [ $? -ne 0 ]; then
+            logInfo "Unable to remove Google Compute Engine label '$_labelName'."
+        else
+            logInfo "Google Compute Engine label '$_labelName' removed."
+        fi
     fi
 
 }
@@ -1651,8 +1779,10 @@ function checkIfLocalCmInitFileExists() {
 function checkIfLocalCmMainFileExists() {
 
     if [ -f "$local_ansible_main_file" ]; then
+        logInfo "Local configuration file '$local_ansible_main_file' found."
         return 1
     else
+        logInfo "Local configuration file '$local_ansible_main_file' not found."
         return 0
     fi
 
@@ -1741,6 +1871,7 @@ function fatalError() {
     if [ "$verbose_mode" -ne 1 ]; then
         echo "$_message"
     fi
+    addInstanceLabel 'cmbootstrap-failed'
     exit "$_exit_code"
 
 }
@@ -1772,15 +1903,23 @@ function createEscaped() {
 # --------------------------------------------------------------------------------
 args=("$@")
 _configGeneral
+# remove any labels that might have been previously set before labeling as started
+removeInstanceLabel 'cmbootstrap-failed' 1
+removeInstanceLabel 'cmbootstrap-completed' 1
+removeInstanceLabel 'cmbootstrap-completed-previously' 1
+addInstanceLabel 'cmbootstrap-started'
 _configPath
 _init
 _retrieveMetaData
-_configTemp
+configTemp
 _configVcs
 _configCm
 _configHostname
+addInstanceLabel 'cmbootstrap-installing'
 _installPrerequisites
 _fetchFiles
+addInstanceLabel 'cmbootstrap-configuring'
 _runInitFile
 _runMainFile
 _cleanup
+addInstanceLabel 'cmbootstrap-completed'
