@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.82.
+## Version 1.2.83.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -61,6 +61,7 @@ function _configGeneral() {
     metaDataValue=''
     cm_disable_labeling_reported=''
     last_instance_label_set=''
+    CM_GOOGLE_COMPUTE_ENGINE=''
     gcp_instance_name=''
     gcp_zone=''
     getAmazonEC2Tag_EnvironmentError=''
@@ -126,7 +127,6 @@ function _retrieveMetaData() {
     local _https_proxy
 
     # initialize variables
-    CM_GOOGLE_COMPUTE_ENGINE=''
     CM_AMAZON_EC2=''
     CM_AMAZON_LINUX=''
     CM_VMWARE=''
@@ -176,13 +176,11 @@ function _retrieveMetaData() {
         readConfigFileValue 'cm-disable-labeling'
         CM_DISABLE_LABELING="$configValue"
     else
-        logInfo 'Configuration file not found.'
+        logInfo "Configuration file '$cmbootstrap_config_path' not found."
     fi
 
-    # configure temporary directory if specified in config file
-    if [ ! -z "$CM_TMP_DIR" ]; then
-        configTemp
-    fi
+    # configure temporary directory
+    configTemp
 
     # none of the metadata is mandatory if using
     # local configuration management files
@@ -262,6 +260,7 @@ function _retrieveMetaData() {
     if [ -z "$CM_TMP_DIR" ]; then
         getMetaData 'cm-tmp-dir'
         CM_TMP_DIR="$metaDataValue"
+        # reconfigure temporary directory if specified via meta data
         configTemp
     fi
     if [ -z "$CM_DISABLE_LABELING" ]; then
@@ -1014,10 +1013,6 @@ function getMetaData() {
     # detect Google Compute Engine instance
     checkGoogleComputeAvailable
     if [ $? -eq 0 ]; then
-        if [ -z "$CM_GOOGLE_COMPUTE_ENGINE" ]; then
-            logInfo "Google Compute Engine detected."
-        fi
-        CM_GOOGLE_COMPUTE_ENGINE=1
         getMetaDataGoogleComputeEngine "$_metaDataName" "$_mandatory"
         return
     fi
@@ -1092,12 +1087,12 @@ function addInstanceLabel() {
         if [ $? -eq 0 ]; then
             # remove last label if recorded
             if [ ! -z "$last_instance_label_set"  ]; then
-                logInfo "Removing instance label '$last_instance_label_set'..."
                 removeInstanceLabel "$last_instance_label_set"
             fi
             last_instance_label_set="$_labelName"
         fi
     else
+        logInfo "Unable to add instance label '$_labelName', unknown platform."
         return
     fi
 
@@ -1112,6 +1107,7 @@ function removeInstanceLabel() {
     if [ $? -eq 0 ]; then
         removeInstanceLabelGoogleComputeEngine "$_labelName" "$_ignoreMissing"
     else
+        logInfo "Unable to remove instance label '$_labelName', unknown platform."
         return
     fi
 
@@ -1151,26 +1147,20 @@ function addInstanceLabelGoogleComputeEngine() {
     local _instanceName
     local _zone
 
-    if [ -z "$gcp_instance_name" ]; then
-        logInfo "Retrieving GCP instance name..."
-        gcp_instance_name=$(curl --fail --header "$gce_metadata_header" "$gce_metadata_url/hostname" 2>/dev/null  | cut -d. -f1)
-    fi
-    if [ $? -ne 0 ] || [ -z  "$gcp_instance_name" ]; then
-        logInfo "Error retrieving Google Compute Engine instance name."
-        return
-    fi
-    if [ -z "$gcp_zone" ]; then
-        gcp_zone=$(curl --fail --header "$gce_metadata_header" "$gce_metadata_url/zone" 2>/dev/null  | cut -d. -f1)
-    fi
-    if [ $? -ne 0 ] || [ -z  "$gcp_zone" ]; then
-        logInfo "Error retrieving Google Compute Engine zone."
-        return
-    fi
-
     logInfo "Adding Google Compute Engine label '$_labelName'..."
-    gcloud compute instances add-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName="
+    getGoogleComputeEngineInstanceAndZone
+    if [ $? -ne 0 ]; then
+        logInfo "Unable to retrieve Google Compute Engine instance and zone."
+        return 1
+    fi
+    if [ "$verbose_mode" -eq 1 ]; then
+        gcloud compute instances add-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName="
+    else
+        gcloud compute instances add-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName=" >>"$cmbootstrap_log_path" 2>&1
+    fi
     if [ $? -ne 0 ]; then
         logInfo "Unable to add Google Compute Engine label '$_labelName'."
+        return 2
     else
         logInfo "Google Compute Engine label '$_labelName' added."
     fi
@@ -1182,17 +1172,49 @@ function removeInstanceLabelGoogleComputeEngine() {
     local _ignoreMissing=$2
 
     logInfo "Removing Google Compute Engine label '$_labelName'..."
+    getGoogleComputeEngineInstanceAndZone
+    if [ $? -ne 0 ]; then
+        logInfo "Unable to retrieve Google Compute Engine instance and zone."
+        return 1
+    fi
     if [ ! -z "$_ignoreMissing" ] && [ "$_ignoreMissing" -eq 1 ]; then
-        gcloud compute instances remove-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName" 2>/dev/null
+        if [ "$verbose_mode" -eq 1 ]; then
+            gcloud compute instances remove-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName" 2>/dev/null
+        else
+            gcloud compute instances remove-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName" >>"$cmbootstrap_log_path" 2>/dev/null
+        fi
         if [ $? -eq 0 ]; then
             logInfo "Google Compute Engine label '$_labelName' removed."
         fi
     else
-        gcloud compute instances remove-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName"
+        if [ "$verbose_mode" -eq 1 ]; then
+            gcloud compute instances remove-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName"
+        else
+            gcloud compute instances remove-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName" >>"$cmbootstrap_log_path" 2>&1
+        fi
         if [ $? -ne 0 ]; then
             logInfo "Unable to remove Google Compute Engine label '$_labelName'."
         else
             logInfo "Google Compute Engine label '$_labelName' removed."
+        fi
+    fi
+
+}
+function getGoogleComputeEngineInstanceAndZone() {
+
+    if [ -z "$gcp_instance_name" ]; then
+        logInfo "Retrieving GCP instance name..."
+        gcp_instance_name=$(curl --fail --header "$gce_metadata_header" "$gce_metadata_url/hostname" 2>/dev/null  | cut -d. -f1)
+        if [ $? -ne 0 ] || [ -z  "$gcp_instance_name" ]; then
+            logInfo "Error retrieving Google Compute Engine instance name."
+            return 1
+        fi
+    fi
+    if [ -z "$gcp_zone" ]; then
+        gcp_zone=$(curl --fail --header "$gce_metadata_header" "$gce_metadata_url/zone" 2>/dev/null  | cut -d/ -f4)
+        if [ $? -ne 0 ] || [ -z  "$gcp_zone" ]; then
+            logInfo "Error retrieving Google Compute Engine zone."
+            return 2
         fi
     fi
 
@@ -1432,6 +1454,15 @@ function checkGoogleComputeAvailable() {
     # detect GCE instances via script runner executable
     google_metadata_script_runner --help >/dev/null 2>&1
 
+    if [ $? -eq 0 ]; then
+        if [ -z "$CM_GOOGLE_COMPUTE_ENGINE" ]; then
+            logInfo "Google Compute Engine detected."
+        fi
+        CM_GOOGLE_COMPUTE_ENGINE=1
+        return 0
+    else
+        return 1
+    fi
 }
 
 
@@ -1903,15 +1934,14 @@ function createEscaped() {
 # --------------------------------------------------------------------------------
 args=("$@")
 _configGeneral
+_configPath
+_init
 # remove any labels that might have been previously set before labeling as started
 removeInstanceLabel 'cmbootstrap-failed' 1
 removeInstanceLabel 'cmbootstrap-completed' 1
 removeInstanceLabel 'cmbootstrap-completed-previously' 1
 addInstanceLabel 'cmbootstrap-started'
-_configPath
-_init
 _retrieveMetaData
-configTemp
 _configVcs
 _configCm
 _configHostname
@@ -1923,3 +1953,4 @@ _runInitFile
 _runMainFile
 _cleanup
 addInstanceLabel 'cmbootstrap-completed'
+logInfo "Finished."
