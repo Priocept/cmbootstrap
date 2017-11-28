@@ -250,7 +250,7 @@ The following metadata parameters can be used to control the cmbootstrap configu
 |<code>cm-run-once</code>|If set to <code>false</code>, the configuration management process will run on future reboots, even if it has previously succeeded.  Previous success is recorded by the creation of a file at <code>\$HOME/.cmbootstrap/.success</code>.  If cmbootstrap previously failed (i.e. if the <code>.success</code> file does not exist), the configuration management process will run again on each reboot, regardless of this value.  Defaults to <code>true</code> if not specified.
 |<code>cm-disabled</code>|If set to <code>true</code>, the configuration management process is disabled entirely.  Defaults to <code>false</code> if not specified.
 
-##cmbootstrap.cfg
+## cmbootstrap.cfg
 
 Certain metadata values are typically common across all virtual machines or containers within a given set of infrastructure.  Furthermore, you may want to lock down certain metadata values to enforce a given configuration and prevent alternatives being used.
 
