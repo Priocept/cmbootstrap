@@ -70,15 +70,15 @@ The VCS (Version Control System) username and password are provided so that cmbo
 
 cmbootstrap determines where to retrieve its configuration management files, based on the <code>cm-organization</code>, <code>cm-project</code> and <code>cm-type</code> metadata shown in the above example.  These three parameters are then mapped to a given version control system path, as follows:
 
-<code>https://baseurl/cm-company/cm-project/cm-type/</code>
+`https://baseurl/cm-company/cm-project/cm-type/`
 
 for example:
 
-<code>https://github.com/priocept/\<cm-company\>/\<cm-project\>/\<cm-type\>/</code>
+`https://github.com/priocept/<cm-company>/<cm-project>/<cm-type>/`
 
 For the above example metadata, the cmbootstrap framework will look for configuration management files at the following location:
 
-<code>https://github.com/priocept/MyCompany/ECommerce\_Platform/Web_Server/</code>
+`https://github.com/priocept/MyCompany/ECommerce\_Platform/Web_Server/`
 
 If the necessary files exist at this location, they will be executed and the virtual machine will be configured to the required state.  If the expected files do not exist, the cmbootstrap process will fail.
 
@@ -199,7 +199,7 @@ cmbootstrap needs to execute when the virtual machine or container is first laun
 
 This code in turn relies on the <code>fetch-cmbootstrap</code> script which must also be installed on the virtual machine, and is available here:
 
-<https://github.com/priocept/cmbootstrap/examples/launch/rc.local/fetch-cmbootstrap>
+<https://github.com/Priocept/cmbootstrap/blob/master/examples/launch/rc.local/fetch-cmbootstrap>
 
 This script will automatically download the latest cmbootstrap directly from GitHub.  Alternatively, you can save a static copy of cmbootstrap on you virtual machine, and then call this directly from <code>/etc/rc.local</code>. 
 
@@ -213,7 +213,7 @@ On Amazon EC2, the user data field is used to launch cmbootstrap.  This is equiv
 
 An example user data script for launching cmbootstrap on EC2 is available here:
 
-<https://github.com/priocept/cmbootstrap/examples/launch/AWS/user-data-cmbootstrap.sh>
+<https://github.com/Priocept/cmbootstrap/blob/master/examples/launch/AWS/user-data-cmbootstrap.sh>
 
 Note that cmbootstrap cannot be specified directly as the user data script, as it will exceed the maximum user data field size imposed by EC2.
 
