@@ -1,0 +1,45 @@
+# Utility script for starting VirtualBox VM in headless mode
+# with metadata set as defined in vboxcm.txt.
+#
+# Usage: startvm <vm-name>
+
+if [ "$1" = "" ]; then
+    echo "Usage: startvm <vm-name>"
+    exit 1
+else
+    VM_NAME="$1"
+fi
+
+# check VBoxManage command is available
+command -v VBoxManage >/dev/null 2>&1 || { echo >&2 "VBoxManage command not available."; exit 2; }
+
+# check vboxsetcm command is available
+if [ ! -x "./vboxsetcm" ]; then
+    echo "./vboxsetcm not available or not executable."
+    exit 3
+fi
+
+# check ping command is available
+if [ ! -x "./ping" ]; then
+    echo "./ping not available or not executable."
+    exit 4
+fi
+
+# set VM metadata
+echo "Setting VM metadata..."
+./vboxsetcm "$VM_NAME"
+
+echo "Starting VM..."
+VBoxManage startvm "$VM_NAME" --type headless
+
+if [ $? -ne 0 ]; then
+    echo "Failed to start VM."
+    exit 5
+fi
+
+echo "Waiting for $VM_NAME ping response..."
+until ./ping "$VM_NAME" -c 1 >/dev/null 2>&1
+do
+    sleep 1
+done
+echo "$VM_NAME is up."

@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# Utility script for setting VirtualBox metadata from the host.
+#
+# Usage: vboxsetmetadata <vm-name> <name> [<value>]
+
+if [ "$1" = "" ] || [ "$2" = "" ]; then
+    echo "Usage: vboxsetmetadata <vm-name> <name> [<value>]"
+    exit 1
+fi
+
+# check VBoxManage command is available
+command -v VBoxManage >/dev/null 2>&1 || { echo >&2 "VBoxManage command not available."; exit -2; }
+
+if [ "$3" = "" ]; then
+    echo "Deleting $2."
+    VBoxManage guestproperty delete "$1" "$2"
+else
+    echo "Setting $2=$3."
+    VBoxManage guestproperty set "$1" "$2" "$3"
+fi

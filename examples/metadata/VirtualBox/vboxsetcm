@@ -1,0 +1,28 @@
+#!/bin/bash
+# Utility script for setting VirtualBox metadata loaded from vboxcm.txt file.
+#
+# Usage: vboxsetcm <vm-name>
+
+CM_FILE="vboxcm.txt"
+
+if [ "$1" = "" ]; then
+    echo "Usage: vboxsetcm <vm-name>"
+    exit 1
+fi
+
+if [ ! -f "$CM_FILE" ]; then
+    echo "$CM_FILE not found"
+    exit 2
+fi
+
+# check vboxsetmetadata command is available
+if [ ! -x "./vboxsetmetadata" ]; then
+    echo "./vboxsetmetadata not available or not executable."
+    exit 3
+fi
+
+# check VBoxManage command is available
+command -v VBoxManage >/dev/null 2>&1 || { echo >&2 "VBoxManage command not available."; exit 4; }
+
+# read in the configuration management file and set VM metadata for each entry
+grep -v '^#' "$CM_FILE" | grep -v "^$" | awk -v vm_name="$1" '{ split($0,a,":"); val = index($0,":"); system("./vboxsetmetadata " vm_name " '\''" a[1] "'\'' '\''" substr($0,val+1) "'\''") }'

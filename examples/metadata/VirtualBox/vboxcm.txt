@@ -1,0 +1,10 @@
+# example VirtualBox metadata file for use with vboxsetmetadata.sh script
+cm-vcs-username:<username>
+cm-vcs-password:<password>
+cm-organization:<organization>
+cm-project:<project>
+cm-type:<type>
+
+# the following metadata values are also required if not pre-configured in cmbootstrap.cfg
+#cm-vcs-repo-base:https://github.com/<repo_path>
+#cm-vcs-repo-type:Git

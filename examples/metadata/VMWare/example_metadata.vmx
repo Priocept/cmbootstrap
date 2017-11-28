@@ -1,0 +1,9 @@
+# example cmbootstrap metadata entries for use with
+# VMware - copy these values into your existing .vmx file
+guestinfo.cm-organization = "<organization>"
+guestinfo.cm-project = "<project>"
+guestinfo.cm-type = "<type>"
+
+# the following metadata values are also required if not pre-configured in cmbootstrap.cfg
+#guestinfo.cm-vcs-username = "<username>"
+#guestinfo.cm-vcs-password = "<password>"
