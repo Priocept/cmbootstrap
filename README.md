@@ -102,7 +102,7 @@ guestinfo.cm-organization = "MyCompany"
 
 Example <code>.vmx</code> file entries can be found here:
 
-<http://github.com/priocept/cmbootstrap/examples/VMMetadata/VMware/>
+<https://github.com/Priocept/cmbootstrap/blob/master/examples/metadata/VMWare/>
 
 ### VirtualBox
 
@@ -114,7 +114,7 @@ cm-organization:MyCompany
 
 An example <code>vboxcm.txt</code> file and supporting scripts can be found here:
 
-<http://github.com/priocept/cmbootstrap/examples/metadata/VirtualBox/>
+<https://github.com/Priocept/cmbootstrap/blob/master/examples/metadata/VirtualBox/>
 
 ### Docker
 
@@ -128,7 +128,7 @@ Note that the metadata names are changed from lowercase to uppercase, and hyphen
 
 A standard cmbootstrap compatible template Dockerfile is available for download at this location:
 
-<https://github.com/priocept/cmbootstrap/examples/launch/Docker/>
+<https://github.com/Priocept/cmbootstrap/blob/master/examples/launch/Docker/Dockerfile>
 
 ### Amazon EC2 (user data based)
 
@@ -142,7 +142,7 @@ The userdata field becomes a combination of a set of <code>name:value</code> met
 
 A standard cmbootstrap compatible template user data file is available for download at this location:
 
-<https://github.com/priocept/cmbootstrap/examples/launch/AWS/user-data-cmbootstrap.sh>
+<https://github.com/Priocept/cmbootstrap/blob/master/examples/launch/AWS/user-data-cmbootstrap.sh>
 
 ### Amazon EC2 (tag based)
 
@@ -195,7 +195,7 @@ The technique used above to define cmbootstrap metadata within a Docker containe
 
 cmbootstrap needs to execute when the virtual machine or container is first launched.  For VMware or VirtualBox based virtual machines, this usually means executing it via <code>/etc/rc.local</code>.  Example code to add to <code>/etc/rc.local</code> is available here:
 
-<https://github.com/priocept/cmbootstrap/examples/launch/rc.local/rc.local.sh>
+<https://github.com/Priocept/cmbootstrap/blob/master/examples/launch/rc.local/rc.local.sh>
 
 This code in turn relies on the <code>fetch-cmbootstrap</code> script which must also be installed on the virtual machine, and is available here:
 
@@ -225,7 +225,7 @@ For Google Compute Engine, the cmbootstrap script must be run via the "startup s
 
 A simple Compute Engine startup script can be used which combines <code>fetch-cmbootstrap</code> and <code>/etc/rc.local</code> above.  If using CentOS on Google Compute Engine, you can use the following script which provides additional features such as automatic installation of wget, generation of an escaped version of the script for use with Deployment Manager, and automatic labelling of the instance to report cmbootstrap download progress:
 
-<https://github.com/priocept/cmbootstrap/examples/launch/GCP/startup-script-fetch-cmbootstrap.sh>
+<https://github.com/Priocept/cmbootstrap/blob/master/examples/launch/rc.local/fetch-cmbootstrap>
 
 Note that cmbootstrap cannot be specified directly as the startup script, as it may exceed the maximum metadata size limit imposed by Google Compute Engine.
 
