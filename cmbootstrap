@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.83.
+## Version 1.2.84.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -295,6 +295,8 @@ function _retrieveMetaData() {
     CM_SET_HOSTNAME="$metaDataValue"
     getMetaData 'cm-args'
     CM_ARGS="$metaDataValue"
+    getMetaData 'cm-gcloud-debug'
+    CM_GCLOUD_DEBUG="$metaDataValue"
     getMetaData 'cm-run-once'
     run_once="$metaDataValue"
     getMetaData 'cm-startup-delay'
@@ -1143,23 +1145,35 @@ function getMetaDataGoogleComputeEngine() {
 function addInstanceLabelGoogleComputeEngine() {
 
     local _labelName=$1
-    local _deleteLabelName=$1
-    local _instanceName
+    local _httpLog=$2
     local _zone
+    local _gcloudParams
 
-    logInfo "Adding Google Compute Engine label '$_labelName'..."
     getGoogleComputeEngineInstanceAndZone
+    logInfo "Adding Google Compute Engine label '$_labelName' to instance '$gcp_instance_name' (zone '$gcp_zone')..."
     if [ $? -ne 0 ]; then
         logInfo "Unable to retrieve Google Compute Engine instance and zone."
         return 1
     fi
+
+    _gcloudParams=( compute instances add-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName=" )
+
+    if [ "$_httpLog" = "1" ]; then
+        _gcloudParams=( '--log-http' '--verbosity=debug' "${_gcloudParams[@]}" )
+    fi
     if [ "$verbose_mode" -eq 1 ]; then
-        gcloud compute instances add-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName="
+        gcloud "${_gcloudParams[@]}"
     else
-        gcloud compute instances add-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName=" >>"$cmbootstrap_log_path" 2>&1
+        gcloud "${_gcloudParams[@]}"  >>"$cmbootstrap_log_path" 2>&1
     fi
     if [ $? -ne 0 ]; then
-        logInfo "Unable to add Google Compute Engine label '$_labelName'."
+        logInfo "Error adding Google Compute Engine label '$_labelName'."
+        # if labelling failed and gcloud debug option is enabled, retry with HTTP logging enabled to allow diagnosis
+        if [ "$_httpLog" != "1" ] && [ "$CM_GCLOUD_DEBUG" = "true" ]; then
+            logInfo "Retrying Google Compute Engine labelling with HTTP logging enabled..."
+            addInstanceLabelGoogleComputeEngine "$_labelName" '1'
+            return "$?"
+        fi
         return 2
     else
         logInfo "Google Compute Engine label '$_labelName' added."
@@ -1171,8 +1185,8 @@ function removeInstanceLabelGoogleComputeEngine() {
     local _labelName=$1
     local _ignoreMissing=$2
 
-    logInfo "Removing Google Compute Engine label '$_labelName'..."
     getGoogleComputeEngineInstanceAndZone
+    logInfo "Removing Google Compute Engine label '$_labelName' from instance '$gcp_instance_name' (zone '$gcp_zone')..."
     if [ $? -ne 0 ]; then
         logInfo "Unable to retrieve Google Compute Engine instance and zone."
         return 1
