@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.84.
+## Version 1.2.85.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -12,22 +12,27 @@
 
 
 # configuration constants
-default_vcs_revision="HEAD"
-default_tmp_dir="/tmp"
-default_svn_version="subversion"
-default_git_version="git"
-default_ansible_version="ansible"
-gce_metadata_url="http://metadata/computeMetadata/v1/instance"
+default_vcs_revision='HEAD'
+default_tmp_dir='/tmp'
+default_svn_version='subversion'
+default_git_version='git'
+default_ansible_version=''
+gce_metadata_url='http://metadata/computeMetadata/v1/instance'
 gce_metadata_header='Metadata-Flavor: Google'
-amazon_linux_svn_17_sub_version=".22-1"
-amazon_linux_svn_17_base_url="http://opensource.wandisco.com/centos/6/svn-1.7/RPMS/x86_64"
-amazon_ec2_metadata_url="http://169.254.169.254/latest/user-data"
-amazon_ec2_metadata_cmd="/opt/aws/bin/ec2-metadata"
-ansible_main_file="main.yml"
-ansible_init_file="init.yml"
-ansible_config_file="config.yml"
-git_tmp_path=".cm_git"
-local_cm_dirname="cmbootstrap"
+amazon_linux_svn_17_sub_version='.22-1'
+amazon_linux_svn_17_base_url='http://opensource.wandisco.com/centos/6/svn-1.7/RPMS/x86_64'
+amazon_ec2_metadata_url='http://169.254.169.254/latest/user-data'
+amazon_ec2_metadata_cmd='/opt/aws/bin/ec2-metadata'
+ansible_main_file='main.yml'
+ansible_init_file='init.yml'
+ansible_config_file='config.yml'
+git_tmp_path='.cm_git'
+local_cm_dirname='cmbootstrap'
+openstack_metadata_url="http://169.254.169.254/openstack/latest/meta_data.json"
+openstack_metadata_timeout_seconds=5
+openstack_metadata_config_drive_mount_dir="/mnt/config"
+openstack_metadata_config_drive_mount_point="/dev/disk/by-label/config-2"
+openstack_metadata_config_drive_metadata_file="${openstack_metadata_config_drive_mount_dir}/openstack/latest/meta_data.json"
 
 # general configuration
 # --------------------------------------------------------------------------------
@@ -60,6 +65,7 @@ function _configGeneral() {
     configValue=''
     metaDataValue=''
     cm_disable_labeling_reported=''
+    cm_labeling_unknown_platform_reported=''
     last_instance_label_set=''
     CM_GOOGLE_COMPUTE_ENGINE=''
     gcp_instance_name=''
@@ -67,6 +73,7 @@ function _configGeneral() {
     getAmazonEC2Tag_EnvironmentError=''
     getAmazonEC2Tag_Error=''
     ec2TagValue=''
+    openStackMetaDataJson=''
 
 }
 
@@ -175,6 +182,20 @@ function _retrieveMetaData() {
         CM_TMP_DIR="$configValue"
         readConfigFileValue 'cm-disable-labeling'
         CM_DISABLE_LABELING="$configValue"
+        readConfigFileValue 'cm-vcs-username'
+        CM_VCS_USERNAME="$configValue"
+        readConfigFileValue 'cm-vcs-password'
+        CM_VCS_PASSWORD="$configValue"
+        readConfigFileValue 'cm-ip-address'
+        CM_IP_ADDRESS="$configValue"
+        readConfigFileValue 'cm-netmask'
+        CM_NETMASK="$configValue"
+        readConfigFileValue 'cm-gateway'
+        CM_GATEWAY="$configValue"
+        readConfigFileValue 'cm-dns1'
+        CM_DNS1="$configValue"
+        readConfigFileValue 'cm-dns2'
+        CM_DNS2="$configValue"
     else
         logInfo "Configuration file '$cmbootstrap_config_path' not found."
     fi
@@ -267,15 +288,44 @@ function _retrieveMetaData() {
         getMetaData 'cm-disable-labeling'
         CM_DISABLE_LABELING="$metaDataValue"
     fi
-    getMetaData 'cm-vcs-username'
-    CM_VCS_USERNAME="$metaDataValue"
     if [ -z "$CM_VCS_USERNAME" ]; then
-        getMetaData 'cm-vcs-password'
-    else
-        # version control password is mandatory with username
-        getMetaData 'cm-vcs-password' _mandatory
+        getMetaData 'cm-vcs-username'
+        CM_VCS_USERNAME="$metaDataValue"
     fi
-    CM_VCS_PASSWORD="$metaDataValue"
+    if [ -z "$CM_VCS_USERNAME" ]; then
+        if [ -z "$CM_VCS_PASSWORD" ]; then
+            getMetaData 'cm-vcs-password'
+            CM_VCS_PASSWORD="$metaDataValue"
+        fi
+    else
+        if [ -z "$CM_VCS_PASSWORD" ]; then
+            # version control password is mandatory with username
+            getMetaData 'cm-vcs-password' _mandatory
+            CM_VCS_PASSWORD="$metaDataValue"
+        fi
+    fi
+    if [ -z "$CM_IP_ADDRESS" ]; then
+        getMetaData 'cm-ip-address'
+        CM_IP_ADDRESS="$metaDataValue"
+    fi
+    if [ -z "$CM_NETMASK" ]; then
+        getMetaData 'cm-netmask'
+        CM_NETMASK="$metaDataValue"
+    fi
+    if [ -z "$CM_GATEWAY" ]; then
+        getMetaData 'cm-gateway'
+        CM_GATEWAY="$metaDataValue"
+    fi
+    if [ -z "$CM_DNS1" ]; then
+        getMetaData 'cm-dns1'
+        CM_DNS1="$metaDataValue"
+    fi
+    if [ -z "$CM_DNS2" ]; then
+        getMetaData 'cm-dns2'
+        CM_DNS2="$metaDataValue"
+    fi
+
+    # the following metadata is retrieved regardless of presence in config file
     getMetaData 'cm-vcs-revision'
     _vcs_revision="$metaDataValue"
     getMetaData 'cm-vcs-branch'
@@ -357,16 +407,16 @@ function _retrieveMetaData() {
     fi
 
     logInfo 'Instance metadata retrieved.'
-    if [ -z "$CM_VCS_USERNAME" ]; then
+    if [ ! -z "$CM_VCS_USERNAME" ]; then
         logInfo "VCS username: $CM_VCS_USERNAME"
     fi
-    if [ -z "$CM_ORGANIZATION" ]; then
+    if [ ! -z "$CM_ORGANIZATION" ]; then
         logInfo "Company: $CM_ORGANIZATION"
     fi
-    if [ -z "$CM_PROJECT" ]; then
+    if [ ! -z "$CM_PROJECT" ]; then
         logInfo "Project: $CM_PROJECT"
     fi
-    if [ -z "$CM_TYPE" ]; then
+    if [ ! -z "$CM_TYPE" ]; then
     logInfo "Type: $CM_TYPE"
     fi
 
@@ -582,7 +632,7 @@ function configAnsible() {
     if [ -z "$CM_ANSIBLE_VERSION" ]; then
         ansible_version="$default_ansible_version"
     else
-        ansible_version="$CM_ANSIBLE_VERSION"
+        ansible_version="-$CM_ANSIBLE_VERSION"
     fi
 
     ansible_log_path="$cmbootstrap_dir/ansible.log.$timestamp"
@@ -827,7 +877,7 @@ function cmFetchStartupFiles() {
     # now retrieve instance specific configuration management file from
     # version control if it exists, otherwise attempt generic version
     if [ ! -z "$CM_HOSTNAME" ]; then
-        logInfo 'Looking for instance specific configuration management file.'
+        logInfo 'Looking for instance specific configuration management file...'
         vcsCheckFileExists "$CM_VCS_REPO_PATH/$ansible_main_file"
     fi
 
@@ -850,7 +900,7 @@ function cmFetchStartupFiles() {
 
     else
 
-        logInfo 'Looking for type generic configuration management file.'
+        logInfo 'Looking for type generic configuration management file...'
 
         CM_VCS_REPO_PATH="$_repo_base/$CM_VCS_REPO_SUB_PATH"
 
@@ -1005,6 +1055,51 @@ function cmRun() {
 }
 
 
+# static IP address configuration
+# --------------------------------------------------------------------------------
+function _setStaticIpAddress() {
+
+    local _firstInterface
+    local _ifcfgFile
+
+    # as a minimum, IP address and netmask must be provided to trigger static IP address configuration
+    if [ -z "$CM_IP_ADDRESS" ] && [ -z "$CM_NETMASK" ]; then
+        return
+    fi
+
+    _firstInterface=$(find /sys/class/net/* ! -name 'lo' -printf "%f\n" | head -1)
+    if [ -z "$_firstInterface" ]; then
+        fatalError "Unable to retrieve first network interface name, terminating." 101
+    fi
+
+    _ifcfgFile="/etc/sysconfig/network-scripts/ifcfg-$_firstInterface"
+
+    # interface name, ip address and netmask are all mandatory
+    echo -e "DEVICE=$_firstInterface\nBOOTPROTO=static\nIPADDR=$CM_IP_ADDRESS\nNETMASK=$CM_NETMASK\nONBOOT=yes\nNM_CONTROLLED=no\n" > "$_ifcfgFile"
+    # gateway, DNS 1 and DNS 2 are optional and not added to the ifcfg- file if not provided
+    if [ ! -z "$CM_GATEWAY" ]; then
+        echo -e "GATEWAY=$CM_GATEWAY\n" >> "$_ifcfgFile"
+    fi
+    if [ ! -z "$CM_DNS1" ]; then
+        echo -e "DNS1=$CM_DNS1\n" >> "$_ifcfgFile"
+    fi
+    if [ ! -z "$CM_DNS2" ]; then
+        echo -e "DNS2=$CM_DNS2\n" >> "$_ifcfgFile"
+    fi
+
+    logInfo "Static IP address $CM_IP_ADDRESS configured for interface $_firstInterface, restarting network..."
+    restartNetwork
+    if [ $? -ne 0 ]; then
+        fatalError "Error setting static IP address $CM_IP_ADDRESS - network restart failed, terminating." 103
+    fi
+    logInfo "Network restarted."
+
+}
+
+function restartNetwork() {
+    service network restart
+}
+
 # generic (auto-detecting) metadata retrieval function
 # --------------------------------------------------------------------------------
 function getMetaData() {
@@ -1061,7 +1156,21 @@ function getMetaData() {
         return
     fi
 
-    logInfo "Virtualization not detected, checking environment variables."
+    # detect OpenStack instance
+    checkOpenStackAvailable
+    if [ $? -eq 0 ]; then
+        if [ -z "$CM_OPENSTACK" ]; then
+            logInfo "Openstack detected."
+        fi
+        CM_OPENSTACK=1
+        getMetaDataOpenStack "$_metaDataName" "$_mandatory"
+        return
+    fi
+
+    if [ -z "$CM_ENVIRONMENT_VARIABLES" ]; then
+        CM_ENVIRONMENT_VARIABLES=1
+        logInfo "Virtualization not detected, checking environment variables."
+    fi
 
     # finally attempt to retrieve metadata via environment variables
     getMetaDataEnvironment "$_metaDataName" "$_mandatory"
@@ -1094,7 +1203,10 @@ function addInstanceLabel() {
             last_instance_label_set="$_labelName"
         fi
     else
-        logInfo "Unable to add instance label '$_labelName', unknown platform."
+        if [ -z "$cm_labeling_unknown_platform_reported" ]; then
+            logInfo "Unable to add instance label '$_labelName', unsupported platform."
+        fi
+        cm_labeling_unknown_platform_reported=1
         return
     fi
 
@@ -1109,7 +1221,10 @@ function removeInstanceLabel() {
     if [ $? -eq 0 ]; then
         removeInstanceLabelGoogleComputeEngine "$_labelName" "$_ignoreMissing"
     else
-        logInfo "Unable to remove instance label '$_labelName', unknown platform."
+        if [ -z "$cm_labeling_unknown_platform_reported" ]; then
+            logInfo "Unable to remove instance label, unsupported platform."
+        fi
+        cm_labeling_unknown_platform_reported=1
         return
     fi
 
@@ -1290,6 +1405,76 @@ function getMetaDataVirtualBox() {
 
     	logInfo "Metadata $_metaDataName='$metaDataValue' retrieved."
 
+    fi
+
+}
+
+# OpenStack metadata retrieval function
+# --------------------------------------------------------------------------------
+function getMetaDataOpenStack() {
+
+	# JSON field separator can either be a colon, a comma, a right curly brace, or end of file
+	local _fs1="\"[[:space:]]*[:,][[:space:]]*\""
+	local _fs2="\"}"
+	local _fs3="\"$"
+
+	local _metaDataName=$1
+	local _mandatory=$2
+
+    # retrieve OpenStack metadata JSON, this contains all the metadata in a single
+    # response, so only need to retrieve if not successfully retrieved already
+    if [ -z "$openStackMetaDataJson" ]; then
+        getOpenStackMetaDataJson
+	    openStackMetaDataJson="$json"
+    fi
+
+    # simple JSON parsing - this makes various assumptions about the JSON format
+    # but should work for OpenStack metadata, and does not require external tools
+	metaDataValue=$(echo "$openStackMetaDataJson" | grep -o "\"$_metaDataName\"\w*:\w*.*[^\\]\"" | awk -F"$_fs1|$_fs2|$_fs3" '{print $2}')
+
+    # terminate if parameter was marked as mandatory
+    if [ -z "$metaDataValue" ] && [ "$_mandatory" = 1 ]; then
+        fatalError "Error retrieving '$_metaDataName' mandatory metadata value from OpenStack, terminating." 65
+    elif [ ! -z "$metaDataValue" ]; then
+    	logInfo "Metadata $_metaDataName='$metaDataValue' retrieved."
+    fi
+
+}
+function getOpenStackMetaDataJson() {
+
+    # check for OpenStack config drive first
+    logInfo "Checking for OpenStack config drive..."
+    if [ -f "$openstack_metadata_config_drive_metadata_file" ]; then
+        logInfo "Config drive already mounted."
+    else
+        mkdir -p "$openstack_metadata_config_drive_mount_dir" > /dev/null 2>&1
+        mount "$openstack_metadata_config_drive_mount_point" "$openstack_metadata_config_drive_mount_dir" > /dev/null 2>&1
+        if [ $? -eq 0 ]; then
+            logInfo "Config drive mounted."
+            if [ ! -f "$openstack_metadata_config_drive_metadata_file" ]; then
+                logInfo "Config drive metadata file not found."
+            fi
+        else
+            logInfo "Config drive not available."
+        fi
+    fi
+    if [ -f "$openstack_metadata_config_drive_metadata_file" ]; then
+        json=$(cat "$openstack_metadata_config_drive_metadata_file")
+        if [ ! -z "$json" ]; then
+            logInfo "OpenStack config drive metadata retrieved."
+            return
+        else
+            logInfo "OpenStack config drive metadata was empty."
+        fi
+    fi
+
+    # attempt metadata retrieval via HTTP if config drive metadata not available
+    logInfo "Retrieving OpenStack metadata from '$openstack_metadata_url'..."
+    json=$(curl --max-time "$openstack_metadata_timeout_seconds" "$openstack_metadata_url" 2>/dev/null)
+    if [ -z "$json" ]; then
+        logInfo "OpenStack HTTP metadata not available."
+    else
+        logInfo "OpenStack HTTP metadata retrieved."
     fi
 
 }
@@ -1507,6 +1692,15 @@ function checkAmazonLinuxAvailable() {
         return 1
     fi
 
+}
+
+
+# OpenStack availability check function
+# --------------------------------------------------------------------------------
+function checkOpenStackAvailable() {
+	command -v dmidecode >/dev/null 2>&1 || { return 1; }
+	dmidecode -t system | grep 'Manufacturer\|Product' | grep 'OpenStack' > /dev/null
+	return $?
 }
 
 
@@ -1791,7 +1985,7 @@ function installAnsible() {
 
     # install Ansible
     logInfo "Installing Ansible..."
-    installPackage "$ansible_version"
+    installPackage "ansible$ansible_version"
 
     # remove example Ansible hosts file, which contains unwanted example
     # hosts such as 'alpha.example.org', and replace with localhost only
@@ -1956,6 +2150,7 @@ removeInstanceLabel 'cmbootstrap-completed' 1
 removeInstanceLabel 'cmbootstrap-completed-previously' 1
 addInstanceLabel 'cmbootstrap-started'
 _retrieveMetaData
+_setStaticIpAddress
 _configVcs
 _configCm
 _configHostname
