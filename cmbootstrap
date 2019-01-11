@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.85.
+## Version 1.2.86.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -73,7 +73,9 @@ function _configGeneral() {
     getAmazonEC2Tag_EnvironmentError=''
     getAmazonEC2Tag_Error=''
     ec2TagValue=''
+    openStackMetaDataJsonRetrieved=''
     openStackMetaDataJson=''
+    json=''
 
 }
 
@@ -148,58 +150,6 @@ function _retrieveMetaData() {
         exit 0;
     fi
 
-    # retrieve config file based metadata if present
-    if [ -f "$cmbootstrap_config_path" ]; then
-        readConfigFileValue 'cm-vcs-repo-base'
-        CM_VCS_REPO_BASE="$configValue"
-        readConfigFileValue 'cm-vcs-repo-base-path'
-        CM_VCS_REPO_BASE_PATH="$configValue"
-        readConfigFileValue 'cm-vcs-repo-type'
-        CM_VCS_REPO_TYPE="$configValue"
-        readConfigFileValue 'cm-vcs-accept-invalid-ssl'
-        CM_VCS_ACCEPT_INVALID_SSL="$configValue"
-        readConfigFileValue 'cm-vcs-svn-version'
-        CM_VCS_SVN_VERSION="$configValue"
-        readConfigFileValue 'cm-vcs-git-version'
-        CM_VCS_GIT_VERSION="$configValue"
-        readConfigFileValue 'cm-ansible-version'
-        CM_ANSIBLE_VERSION="$configValue"
-        readConfigFileValue 'cm-yum-proxy'
-        CM_YUM_PROXY="$configValue"
-        readConfigFileValue 'cm-yum-proxy-username'
-        CM_YUM_PROXY_USERNAME="$configValue"
-        readConfigFileValue 'cm-yum-proxy-password'
-        CM_YUM_PROXY_PASSWORD="$configValue"
-        readConfigFileValue 'cm-http-proxy'
-        CM_HTTP_PROXY="$configValue"
-        readConfigFileValue 'cm-http-proxy-username'
-        CM_HTTP_PROXY_USERNAME="$configValue"
-        readConfigFileValue 'cm-http-proxy-password'
-        CM_HTTP_PROXY_PASSWORD="$configValue"
-        readConfigFileValue 'cm-https-proxy'
-        CM_HTTPS_PROXY="$configValue"
-        readConfigFileValue 'cm-tmp-dir'
-        CM_TMP_DIR="$configValue"
-        readConfigFileValue 'cm-disable-labeling'
-        CM_DISABLE_LABELING="$configValue"
-        readConfigFileValue 'cm-vcs-username'
-        CM_VCS_USERNAME="$configValue"
-        readConfigFileValue 'cm-vcs-password'
-        CM_VCS_PASSWORD="$configValue"
-        readConfigFileValue 'cm-ip-address'
-        CM_IP_ADDRESS="$configValue"
-        readConfigFileValue 'cm-netmask'
-        CM_NETMASK="$configValue"
-        readConfigFileValue 'cm-gateway'
-        CM_GATEWAY="$configValue"
-        readConfigFileValue 'cm-dns1'
-        CM_DNS1="$configValue"
-        readConfigFileValue 'cm-dns2'
-        CM_DNS2="$configValue"
-    else
-        logInfo "Configuration file '$cmbootstrap_config_path' not found."
-    fi
-
     # configure temporary directory
     configTemp
 
@@ -214,118 +164,67 @@ function _retrieveMetaData() {
         _mandatory=1
     fi
 
-    # various metadata is only retrieved if no file based configuration,
-    # this allows a config file to "lock down" the configuration
-    if [ -z "$CM_VCS_REPO_BASE" ]; then
-        getMetaData 'cm-vcs-repo-base' _mandatory
-        CM_VCS_REPO_BASE="$metaDataValue"
-    fi
+    # retrieve metadata
+    getMetaData 'cm-vcs-repo-base' _mandatory
+    CM_VCS_REPO_BASE="$metaDataValue"
     if [ -z "$CM_VCS_REPO_BASE" ]; then
         fatalError 'Metadata cm-vcs-repo-base not defined, terminating.' 11
     fi
-    if [ -z "$CM_VCS_REPO_BASE_PATH" ]; then
         getMetaData 'cm-vcs-base-path'
         CM_VCS_REPO_BASE_PATH="$metaDataValue"
-    fi
-    if [ -z "$CM_VCS_REPO_TYPE" ]; then
         getMetaData 'cm-vcs-repo-type' _mandatory
         CM_VCS_REPO_TYPE="$metaDataValue"
-    fi
     if [ -z "$CM_VCS_REPO_TYPE" ]; then
         fatalError 'Metadata cm-vcs-repo-type not defined, terminating.' 12
     fi
-    if [ -z "$CM_VCS_ACCEPT_INVALID_SSL" ]; then
-        getMetaData 'cm-vcs-accept-invalid-ssl'
-        CM_VCS_ACCEPT_INVALID_SSL="$metaDataValue"
-    fi
-    if [ -z "$CM_VCS_SVN_VERSION" ]; then
-        getMetaData 'cm-vcs-svn-version'
-        CM_VCS_SVN_VERSION="$metaDataValue"
-    fi
-    if [ -z "$CM_VCS_GIT_VERSION" ]; then
-        getMetaData 'cm-vcs-git-version'
-        CM_VCS_GIT_VERSION="$metaDataValue"
-    fi
-    if [ -z "$CM_ANSIBLE_VERSION" ]; then
-        getMetaData 'cm-ansible-version'
-        CM_ANSIBLE_VERSION="$metaDataValue"
-    fi
-    if [ -z "$CM_YUM_PROXY" ]; then
-        getMetaData 'cm-yum-proxy'
-        CM_YUM_PROXY="$metaDataValue"
-    fi
-    if [ -z "$CM_YUM_PROXY_USERNAME" ]; then
-        getMetaData 'cm-yum-proxy-username'
-        CM_YUM_PROXY_USERNAME="$metaDataValue"
-    fi
-    if [ -z "$CM_YUM_PROXY_PASSWORD" ]; then
-        getMetaData 'cm-yum-proxy-password'
-        CM_YUM_PROXY_PASSWORD="$metaDataValue"
-    fi
-    if [ -z "$CM_HTTP_PROXY" ]; then
-        getMetaData 'cm-http-proxy'
-        CM_HTTP_PROXY="$metaDataValue"
-    fi
-    if [ -z "$CM_HTTP_PROXY_USERNAME" ]; then
-        getMetaData 'cm-http-proxy-username'
-        CM_HTTP_PROXY_USERNAME="$metaDataValue"
-    fi
-    if [ -z "$CM_HTTP_PROXY_PASSWORD" ]; then
-        getMetaData 'cm-http-proxy-password'
-        CM_HTTP_PROXY_PASSWORD="$metaDataValue"
-    fi
-    if [ -z "$CM_HTTPS_PROXY" ]; then
-        getMetaData 'cm-https-proxy'
-        CM_HTTPS_PROXY="$metaDataValue"
-    fi
-    if [ -z "$CM_TMP_DIR" ]; then
-        getMetaData 'cm-tmp-dir'
-        CM_TMP_DIR="$metaDataValue"
-        # reconfigure temporary directory if specified via meta data
-        configTemp
-    fi
-    if [ -z "$CM_DISABLE_LABELING" ]; then
-        getMetaData 'cm-disable-labeling'
-        CM_DISABLE_LABELING="$metaDataValue"
-    fi
+    getMetaData 'cm-vcs-accept-invalid-ssl'
+    CM_VCS_ACCEPT_INVALID_SSL="$metaDataValue"
+    getMetaData 'cm-vcs-svn-version'
+    CM_VCS_SVN_VERSION="$metaDataValue"
+    getMetaData 'cm-vcs-git-version'
+    CM_VCS_GIT_VERSION="$metaDataValue"
+    getMetaData 'cm-ansible-version'
+    CM_ANSIBLE_VERSION="$metaDataValue"
+    getMetaData 'cm-yum-proxy'
+    CM_YUM_PROXY="$metaDataValue"
+    getMetaData 'cm-yum-proxy-username'
+    CM_YUM_PROXY_USERNAME="$metaDataValue"
+    getMetaData 'cm-yum-proxy-password'
+    CM_YUM_PROXY_PASSWORD="$metaDataValue"
+    getMetaData 'cm-http-proxy'
+    CM_HTTP_PROXY="$metaDataValue"
+    getMetaData 'cm-http-proxy-username'
+    CM_HTTP_PROXY_USERNAME="$metaDataValue"
+    getMetaData 'cm-http-proxy-password'
+    CM_HTTP_PROXY_PASSWORD="$metaDataValue"
+    getMetaData 'cm-https-proxy'
+    CM_HTTPS_PROXY="$metaDataValue"
+    getMetaData 'cm-tmp-dir'
+    CM_TMP_DIR="$metaDataValue"
+    # reconfigure temporary directory if specified via meta data
+    configTemp
+    getMetaData 'cm-disable-labeling'
+    CM_DISABLE_LABELING="$metaDataValue"
+    getMetaData 'cm-vcs-username'
+    CM_VCS_USERNAME="$metaDataValue"
     if [ -z "$CM_VCS_USERNAME" ]; then
-        getMetaData 'cm-vcs-username'
-        CM_VCS_USERNAME="$metaDataValue"
-    fi
-    if [ -z "$CM_VCS_USERNAME" ]; then
-        if [ -z "$CM_VCS_PASSWORD" ]; then
-            getMetaData 'cm-vcs-password'
-            CM_VCS_PASSWORD="$metaDataValue"
-        fi
+        getMetaData 'cm-vcs-password'
+        CM_VCS_PASSWORD="$metaDataValue"
     else
-        if [ -z "$CM_VCS_PASSWORD" ]; then
-            # version control password is mandatory with username
-            getMetaData 'cm-vcs-password' _mandatory
-            CM_VCS_PASSWORD="$metaDataValue"
-        fi
+        # version control password is mandatory with username
+        getMetaData 'cm-vcs-password' _mandatory
+        CM_VCS_PASSWORD="$metaDataValue"
     fi
-    if [ -z "$CM_IP_ADDRESS" ]; then
-        getMetaData 'cm-ip-address'
-        CM_IP_ADDRESS="$metaDataValue"
-    fi
-    if [ -z "$CM_NETMASK" ]; then
-        getMetaData 'cm-netmask'
-        CM_NETMASK="$metaDataValue"
-    fi
-    if [ -z "$CM_GATEWAY" ]; then
-        getMetaData 'cm-gateway'
-        CM_GATEWAY="$metaDataValue"
-    fi
-    if [ -z "$CM_DNS1" ]; then
-        getMetaData 'cm-dns1'
-        CM_DNS1="$metaDataValue"
-    fi
-    if [ -z "$CM_DNS2" ]; then
-        getMetaData 'cm-dns2'
-        CM_DNS2="$metaDataValue"
-    fi
-
-    # the following metadata is retrieved regardless of presence in config file
+    getMetaData 'cm-ip-address'
+    CM_IP_ADDRESS="$metaDataValue"
+    getMetaData 'cm-netmask'
+    CM_NETMASK="$metaDataValue"
+    getMetaData 'cm-gateway'
+    CM_GATEWAY="$metaDataValue"
+    getMetaData 'cm-dns1'
+    CM_DNS1="$metaDataValue"
+    getMetaData 'cm-dns2'
+    CM_DNS2="$metaDataValue"
     getMetaData 'cm-vcs-revision'
     _vcs_revision="$metaDataValue"
     getMetaData 'cm-vcs-branch'
@@ -632,7 +531,7 @@ function configAnsible() {
     if [ -z "$CM_ANSIBLE_VERSION" ]; then
         ansible_version="$default_ansible_version"
     else
-        ansible_version="-$CM_ANSIBLE_VERSION"
+        ansible_version="$CM_ANSIBLE_VERSION"
     fi
 
     ansible_log_path="$cmbootstrap_dir/ansible.log.$timestamp"
@@ -1090,7 +989,7 @@ function _setStaticIpAddress() {
     logInfo "Static IP address $CM_IP_ADDRESS configured for interface $_firstInterface, restarting network..."
     restartNetwork
     if [ $? -ne 0 ]; then
-        fatalError "Error setting static IP address $CM_IP_ADDRESS - network restart failed, terminating." 103
+        fatalError "Error setting static IP address $CM_IP_ADDRESS - network restart failed, terminating." 102
     fi
     logInfo "Network restarted."
 
@@ -1106,6 +1005,15 @@ function getMetaData() {
 
     local _metaDataName=$1
     local _mandatory=$2
+
+    # first check for presence of metadata in config file, which overrides any other values
+    if [ -f "$cmbootstrap_config_path" ]; then
+        readConfigFileValue "$_metaDataName"
+        if [ ! -z "$configValue" ]; then
+            metaDataValue="$configValue"
+            return
+        fi
+    fi
 
     # detect Google Compute Engine instance
     checkGoogleComputeAvailable
@@ -1422,9 +1330,10 @@ function getMetaDataOpenStack() {
 	local _mandatory=$2
 
     # retrieve OpenStack metadata JSON, this contains all the metadata in a single
-    # response, so only need to retrieve if not successfully retrieved already
-    if [ -z "$openStackMetaDataJson" ]; then
+    # response, so only need to retrieve if no previous attempt to retrieve
+    if [[ "openStackMetaDataJsonRetrieved" -ne 1 ]]; then
         getOpenStackMetaDataJson
+        openStackMetaDataJsonRetrieved=1
 	    openStackMetaDataJson="$json"
     fi
 
@@ -1984,8 +1893,19 @@ function gitClone {
 function installAnsible() {
 
     # install Ansible
-    logInfo "Installing Ansible..."
-    installPackage "ansible$ansible_version"
+    if [ -z "$ansible_version" ]; then
+        logInfo "Installing Ansible package..."
+        installPackage "ansible$ansible_version"
+    else
+        # alternative versions of Ansible need to be installed using PIP
+        logInfo "Installing Ansible version '$ansible_version' using PIP..."
+        installPackage "python-pip"
+        logInfo "Installing Ansible..."
+        pip install "ansible==$ansible_version"
+        if [ $? -ne 0 ]; then
+            fatalError 'Error PIP installing Ansible, terminating.' 111
+        fi
+    fi
 
     # remove example Ansible hosts file, which contains unwanted example
     # hosts such as 'alpha.example.org', and replace with localhost only
