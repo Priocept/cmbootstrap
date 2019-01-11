@@ -1,5 +1,5 @@
 # Overview
-cmbootstrap provides zero-code, masterless, metadata-based bootstrapping and configuration management of virtual machine or container instances on AWS, Google Cloud Platform, VMware, VirtualBox and Docker.
+cmbootstrap provides zero-code, masterless, metadata-based bootstrapping and configuration management of virtual machine or container instances on VMware, VirtualBox, Docker, AWS, Google Cloud Platform and OpenStack.
 
 cmbootstrap currently supports Ansible based configuration management but support for Puppet and other configuration management tools is planned in the near future.  Retrieval of configuration management files from both Git and Subversion repositories are supported with support for Amazon S3 and Google Cloud Storage (GCS) storage buckets to be added soon.
 
@@ -24,11 +24,12 @@ This means:
 
 cmbootstrap will automatically detect and then use the appropriate techniques for metadata retrieval on the following platforms:
 
-1. VirtualBox
-2. VMware
+1. VMware
+2. VirtualBox
 3. Docker
-4. Google Compute Engine
-5. AWS EC2
+4. AWS EC2
+5. Google Compute Engine
+6. OpenStack
 
 This means that your configuration management bootstrapping process will be completely portable across various virtualization and container platforms.  For example, you can build and test a configuration using a local VirtualBox virtual machine or Docker container, and then deploy it into EC2 with no further work.
 
@@ -50,7 +51,7 @@ cmbootstrap automates the process further to provide simplified creation and sta
 
 ## Metadata Based Start-Up
 
-cmbootstrap uses metadata to define what configuration should be applied to a new environment.  The metadata consists of simple name/value pairs, and is defined in different ways for different types of virtualization or containerization platforms.  VMware, VirtualBox, Docker, AWS EC2 and Google Compute Engine are currently supported.
+cmbootstrap uses metadata to define what configuration should be applied to a new environment.  The metadata consists of simple name/value pairs, and is defined in different ways for different types of virtualization or containerization platforms.  VMware, VirtualBox, Docker, AWS, Google Cloud Platform and OpenStack are currently supported.
 
 For VMware, a cmbootstrap metadata definition is stored within the <code>.vmx</code> file and looks like the following:
 
@@ -187,13 +188,36 @@ metadata:
 
 cmbootstrap will automatically detect when it is running on Google Compute Engine, and if detected will make calls to the Google Cloud Platform metadata API endpoints to retrieve the necessary metadata.
 
+### OpenStack
+
+Configuration management metadata can be defined for OpenStack virtual machines via the instance's metadata.  More information on OpenStack metadata is available here:
+
+<https://docs.openstack.org/nova/latest/user/metadata-service.html>
+
+Metadata can be set manually via the OpenStack web console or the <code>openstack</code> command line, but should ideally be defined using infrastructure-as-code, for example using Heat templates (YAML format) as follows:
+
+<pre>
+resources:
+
+  instance1:
+    type: OS::Nova::Server
+    properties:
+      config_drive: true
+      metadata:
+        cm-organization: "&lt;value&gt;"
+        cm-project: "&lt;value&gt;"
+        cm-type: "&lt;value&gt;"
+</pre>
+
+cmbootstrap will automatically detect when it is running on an OpenStack (Nova) virtual machine, and if OpenStack is detected, will first check for a metadata "config drive".  If this exists, it will be used to read the metadata.  If it does not exist, cmbootstrap will instead make calls to the OpenStack metadata HTTP endpoint to retrieve the necessary metadata.  The <code>config_drive: true</code> entry shown in the Heat code above is therefore optional if the metadata HTTP service is available on your OpenStack virtual machines.
+
 ### Environment variable based
 
 The technique used above to define cmbootstrap metadata within a Docker container can also be used to control cmbootstrap on any other environment which does not explicitly support metadata, but where you can set environment variables.  For example, you could use cmbootstrap on a bare-metal server installation, by defining environment variables prior to running cmbootstrap.
 
-### Launching cmbootstrap - VMware/VirtualBox
+### Launching cmbootstrap - VMware/VirtualBox/OpenStack
 
-cmbootstrap needs to execute when the virtual machine or container is first launched.  For VMware or VirtualBox based virtual machines, this usually means executing it via <code>/etc/rc.local</code>.  Example code to add to <code>/etc/rc.local</code> is available here:
+cmbootstrap needs to execute when the virtual machine or container is first launched.  For VMware, VirtualBox or OpenStack based virtual machines, this usually means executing it via <code>/etc/rc.local</code>.  Example code to add to <code>/etc/rc.local</code> is available here:
 
 <https://github.com/Priocept/cmbootstrap/blob/master/examples/launch/rc.local/rc.local.sh>
 
@@ -257,6 +281,8 @@ Certain metadata values are typically common across all virtual machines or cont
 If cmbootstrap finds a file called <code>cmbootstrap.cfg</code> in the same directory as itself (typically <code>/usr/local/bin/cmbootstrap.cfg</code>, it will read metadata values from this file.  <code>name:value</code> format is expected, with lines starting with <code>#</code> being treated as comments and ignored.  Metadata values defined in <code>cmbootstrap.cfg</code> always override any metadata defined using the techniques described above.
 
 By using <code>cmbootstrap.cfg</code> within your base virtual machine or container image, you can embed a standard configuration for your version control repository location.  This minimises the amount of metadata that you then need to pass to cmbootstrap for each individual virtual machine, with only <code>cm-organization</code>, <code>cm-project</code> and <code>cm-type</code> being required and the rest being specified in <code>cmbootstrap.cfg</code>.
+
+The cmbootstrap.cfg file can also be used to control cmbootstrap on platforms that do not provide support for virtual machine metadata, such as KVM virtual machines, or "bare metal" physical servers.
 
 ## Overview of Configuration Management Bootstrap Process
 
