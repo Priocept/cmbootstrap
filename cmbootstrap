@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.86.
+## Version 1.2.87.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -1560,9 +1560,10 @@ function checkVirtualBoxAvailable() {
 function checkGoogleComputeAvailable() {
 
     # detect GCE instances via script runner executable
-    google_metadata_script_runner --help >/dev/null 2>&1
+    google_metadata_script_runner >/dev/null 2>&1
 
-    if [ $? -eq 0 ]; then
+    # non-zero exit code still indicates google_metadata_script_runner presence, unless value is 127
+    if [ $? -ne 127 ]; then
         if [ -z "$CM_GOOGLE_COMPUTE_ENGINE" ]; then
             logInfo "Google Compute Engine detected."
         fi
