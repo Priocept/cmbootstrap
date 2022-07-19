@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.87.
+## Version 1.2.88.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -999,9 +999,37 @@ function restartNetwork() {
     service network restart
 }
 
+
 # generic (auto-detecting) metadata retrieval function
 # --------------------------------------------------------------------------------
 function getMetaData() {
+
+    local _metaDataName=$1
+    local _appendedCmArgsValue=""
+
+    getMetaDataWithAutoDetect "$_metaDataName"
+
+    if [ "$_metaDataName" == "cm-args" ] && [ -z "$metaDataValue" ]; then
+        logInfo "cm-args value not found, checking cm-args-N values..."
+        for i in {1..100}
+        do
+            getMetaDataWithAutoDetect "cm-args-$i"
+            if [ ! -z "$metaDataValue" ]; then
+                _appendedCmArgsValue+="$metaDataValue"
+            else
+                logInfo "cm-args-$i value not found."
+                break
+            fi
+        done
+        metaDataValue="$_appendedCmArgsValue"
+        logInfo "Combined cm-args value='$metaDataValue'."
+    fi
+
+ }
+
+# generic (auto-detecting) metadata retrieval function
+# --------------------------------------------------------------------------------
+function getMetaDataWithAutoDetect() {
 
     local _metaDataName=$1
     local _mandatory=$2
