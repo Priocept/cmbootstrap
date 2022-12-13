@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.88.
+## Version 1.2.89.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -321,7 +321,7 @@ function _retrieveMetaData() {
 
     # terminate if configuration management has previously
     # completed successfully, unless "run once" is disabled
-    if [ "$run_once" != "false" ] && [ -e "$success_path" ]; then
+    if [ "$run_once" != "false" ] && [ -f "$success_path" ]; then
         # only terminate if not using local files
         checkIfLocalCmFilesExist
         if [ "$?" -ne 1 ]; then
@@ -608,6 +608,18 @@ function installPackageManagement() {
 
         # configure yum proxy
         configYumProxy
+
+        yum_clean_all_path="$cmbootstrap_dir/.yum_clean_all"
+
+        # perform yum clean all, but only once per environment
+        if [ ! -f "$yum_clean_all_path" ]; then
+            logInfo 'Running yum clean all...'
+            yum clean all
+            if [ $? -ne 0 ]; then
+                fatalError "yum clean all failed." 121
+            fi
+            touch "$yum_clean_all_path"
+        fi
 
         # install yum utils
         logInfo 'Installing yum utils...'
