@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.89.
+## Version 1.2.90.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -614,11 +614,17 @@ function installPackageManagement() {
         # perform yum clean all, but only once per environment
         if [ ! -f "$yum_clean_all_path" ]; then
             logInfo 'Running yum clean all...'
-            yum clean all
+            if [ "$verbose_mode" -eq 1 ]; then
+                yum clean all
+            else
+                yum clean all >>"$packages_log_path" 2>>"$packages_err_path"
+            fi
             if [ $? -ne 0 ]; then
                 fatalError "yum clean all failed." 121
             fi
             touch "$yum_clean_all_path"
+        else
+            logInfo 'yum clean all was run previously.'
         fi
 
         # install yum utils
