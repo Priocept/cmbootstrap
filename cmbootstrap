@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.91.
+## Version 1.2.92.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -1782,53 +1782,59 @@ function installSubversion() {
     fi
 
 }
+function subversionOperation {
+
+    local _svn_params
+    local _file=$1
+    local _svn_operation=$2
+    local _svn_version
+
+    if [ -z "$CM_VCS_USERNAME" ]; then
+        _svn_params=()
+    else
+        _svn_params=( --no-auth-cache --username "$CM_VCS_USERNAME" --password "$CM_VCS_PASSWORD" )
+    fi
+
+    _svn_version=$(svn --version | head -1 | cut -d ' ' -f3)
+    _svn_major_version=$(svn --version | head -1 | cut -d ' ' -f3 | cut -d '.' -f1)
+    _svn_minor_version=$(svn --version | head -1 | cut -d ' ' -f3 | cut -d '.' -f2)
+    # use --non-interactive option with Subversion >=1.10, and old versions if invalid SSL certificate support not required
+    if [ "$_svn_major_version" -gt "1" ] || [ "$_svn_minor_version" -ge "10" ] || [[ "$_svn_version" =~ ^1\.10\..* ]] || [ "$CM_VCS_ACCEPT_INVALID_SSL" != "true" ]; then
+        logInfo "Subversion $_svn_version detected, using --non-interactive option."
+        _svn_params+=( --non-interactive )
+        # if using SSL with invalid certificate on Subversion >=1.10, need to pass --trust-server-cert-failures argument
+        if [[ "$_file" =~ ^https\:\/\/.* ]] && [ "$CM_VCS_ACCEPT_INVALID_SSL" = "true" ]; then
+            logInfo "Accepting invalid certificates with Subversion --trust-server-cert-failures option."
+            _svn_params+=('--trust-server-cert-failures=unknown-ca,cn-mismatch,expired,not-yet-valid,other')
+        fi
+        if [ "$verbose_mode" -eq 1 ]; then
+            svn "$_svn_operation" -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
+        else
+            svn "$_svn_operation" -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >/dev/null 2>&1
+        fi
+    else
+        # if using SSL with invalid certificate on Subversion < 1.10, need to run in interactive mode and pass 't' to accept invalid certificates
+        logInfo "Subversion $_svn_version detected, invalid SSL certificates will be accepted using interactive mode."
+        if [[ "$_file" =~ ^https\:\/\/.* ]] && [ "$CM_VCS_ACCEPT_INVALID_SSL" = "true" ]; then
+            if [ "$verbose_mode" -eq 1 ]; then
+                echo 't' | svn "$_svn_operation" -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
+            else
+                echo 't' | svn "$_svn_operation" -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >/dev/null 2>&1
+            fi
+        fi
+    fi
+
+}
+
 function subversionCheckFileExists {
-
-    local _svn_params
-    local _file=$1
-
-    logInfo "Checking for Subversion file: $_file (revision $CM_VCS_REVISION)"
-
-    _svn_params=( --non-interactive )
-    if [ ! -z "$CM_VCS_USERNAME" ]; then
-        _svn_params+=( --no-auth-cache --username "$CM_VCS_USERNAME" --password "$CM_VCS_PASSWORD"  )
-    fi
-
-    # if using SSL with invalid certificate, need to pass --trust-server-cert argument
-    if [[ "$_file" =~ ^https\:\/\/.* ]] && [ "$CM_VCS_ACCEPT_INVALID_SSL" = "true" ]; then
-        _svn_params+=('--trust-server-cert')
-    fi
-    if [ "$verbose_mode" -eq 1 ]; then
-        svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
-    else
-        svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >/dev/null 2>&1
-    fi
-
+    logInfo "Checking for Subversion file: $1 (revision $CM_VCS_REVISION)"
+    subversionOperation "$1" "ls"
 }
+
 function subversionRetrieveFile {
-
-    local _svn_params
-    local _file=$1
-
-    logInfo "Retrieving Subversion file: $_file (revision $CM_VCS_REVISION)"
-
-    _svn_params=( --non-interactive )
-    if [ ! -z "$CM_VCS_USERNAME" ]; then
-        _svn_params+=( --no-auth-cache --username "$CM_VCS_USERNAME" --password "$CM_VCS_PASSWORD"  )
-    fi
-
-    # if using SSL with invalid certificate, need to pass --trust-server-cert argument
-    if [[ "$_file" =~ ^https\:\/\/.* ]] && [ "$CM_VCS_ACCEPT_INVALID_SSL" = "true" ]; then
-        _svn_params+=('--trust-server-cert')
-    fi
-    if [ "$verbose_mode" -eq 1 ]; then
-        svn export -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
-    else
-        svn export -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >>"$cmbootstrap_log_path" 2>>"$cmbootstrap_err_path"
-    fi
-
+    logInfo "Retrieving Subversion file: $1 (revision $CM_VCS_REVISION)"
+    subversionOperation "$1" "export"
 }
-
 
 # Git functions
 # --------------------------------------------------------------------------------
