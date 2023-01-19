@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.90.
+## Version 1.2.91.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -1789,26 +1789,19 @@ function subversionCheckFileExists {
 
     logInfo "Checking for Subversion file: $_file (revision $CM_VCS_REVISION)"
 
-    if [ -z "$CM_VCS_USERNAME" ]; then
-        _svn_params=()
-    else
-        _svn_params=( --no-auth-cache --username "$CM_VCS_USERNAME" --password "$CM_VCS_PASSWORD" )
+    _svn_params=( --non-interactive )
+    if [ ! -z "$CM_VCS_USERNAME" ]; then
+        _svn_params+=( --no-auth-cache --username "$CM_VCS_USERNAME" --password "$CM_VCS_PASSWORD"  )
     fi
 
-    # if using SSL with invalid certificate, need to run in interactive mode and pass 't' to accept invalid certificates
+    # if using SSL with invalid certificate, need to pass --trust-server-cert argument
     if [[ "$_file" =~ ^https\:\/\/.* ]] && [ "$CM_VCS_ACCEPT_INVALID_SSL" = "true" ]; then
-        if [ "$verbose_mode" -eq 1 ]; then
-            echo 't' | svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
-        else
-            echo 't' | svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >/dev/null 2>&1
-        fi
+        _svn_params+=('--trust-server-cert')
+    fi
+    if [ "$verbose_mode" -eq 1 ]; then
+        svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
     else
-        _svn_params+=('--non-interactive')
-        if [ "$verbose_mode" -eq 1 ]; then
-            svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
-        else
-            svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >/dev/null 2>&1
-        fi
+        svn ls -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >/dev/null 2>&1
     fi
 
 }
@@ -1819,26 +1812,19 @@ function subversionRetrieveFile {
 
     logInfo "Retrieving Subversion file: $_file (revision $CM_VCS_REVISION)"
 
-    if [ -z "$CM_VCS_USERNAME" ]; then
-        _svn_params=()
-    else
-        _svn_params=( --no-auth-cache --username "$CM_VCS_USERNAME" --password "$CM_VCS_PASSWORD" )
+    _svn_params=( --non-interactive )
+    if [ ! -z "$CM_VCS_USERNAME" ]; then
+        _svn_params+=( --no-auth-cache --username "$CM_VCS_USERNAME" --password "$CM_VCS_PASSWORD"  )
     fi
 
-    # if using SSL with invalid certificate, need to run in interactive mode and pass 't' to accept invalid certificates
+    # if using SSL with invalid certificate, need to pass --trust-server-cert argument
     if [[ "$_file" =~ ^https\:\/\/.* ]] && [ "$CM_VCS_ACCEPT_INVALID_SSL" = "true" ]; then
-        if [ "$verbose_mode" -eq 1 ]; then
-            echo 't' | svn export -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
-        else
-            echo 't' | svn export -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >>"$cmbootstrap_log_path" 2>/dev/null
-        fi
+        _svn_params+=('--trust-server-cert')
+    fi
+    if [ "$verbose_mode" -eq 1 ]; then
+        svn export -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
     else
-        _svn_params+=('--non-interactive')
-        if [ "$verbose_mode" -eq 1 ]; then
-            svn export -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
-        else
-            svn export -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >>"$cmbootstrap_log_path" 2>>"$cmbootstrap_err_path"
-        fi
+        svn export -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >>"$cmbootstrap_log_path" 2>>"$cmbootstrap_err_path"
     fi
 
 }
