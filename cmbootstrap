@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.92.
+## Version 1.2.93.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -1386,6 +1386,9 @@ function getMetaDataOpenStack() {
     # simple JSON parsing - this makes various assumptions about the JSON format
     # but should work for OpenStack metadata, and does not require external tools
 	metaDataValue=$(echo "$openStackMetaDataJson" | grep -o "\"$_metaDataName\"\w*:\w*.*[^\\]\"" | awk -F"$_fs1|$_fs2|$_fs3" '{print $2}')
+    # OpenStack replaces \n with \\n where metadata is specified using
+    # the "{ get_param }" Heat syntax, so this has to be reversed
+    metaDataValue=$(echo "$metaDataValue" | sed 's/\\\\n/\\n/g')
 
     # terminate if parameter was marked as mandatory
     if [ -z "$metaDataValue" ] && [ "$_mandatory" = 1 ]; then
