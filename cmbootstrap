@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.94.
+## Version 1.2.93.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -156,7 +156,7 @@ function _retrieveMetaData() {
     # none of the metadata is mandatory if using
     # local configuration management files
     checkIfLocalCmFilesExist
-    if [ $? -eq 1 ]; then
+    if [ "$?" -eq 1 ]; then
         logInfo "Local configuration management files found, metadata not mandatory."
         _mandatory=0
     else
@@ -324,9 +324,9 @@ function _retrieveMetaData() {
     if [ "$run_once" != "false" ] && [ -f "$success_path" ]; then
         # only terminate if not using local files
         checkIfLocalCmFilesExist
-        if [ $? -ne 1 ]; then
+        if [ "$?" -ne 1 ]; then
             logInfo 'Configuration management successfully completed previously.'
-            addInstanceLabel 'completed-previously'
+            addInstanceLabel 'cmbootstrap-completed-previously'
             exit 0;
         fi
     fi
@@ -432,7 +432,6 @@ function _retrieveMetaData() {
             # remove R character from end to extract delay value
             startup_delay=${startup_delay::-1}
         fi
-        # check if startup delay value is a valid integer
         if [ "$startup_delay" -eq "$startup_delay" ] 2>/dev/null; then
             if [ "$startup_randomized" = "R" ]; then
                 startup_delay=$(echo $(( $RANDOM % $startup_delay )))
@@ -756,7 +755,7 @@ function _fetchFiles() {
 
     # use local files if available - used during configuration management development
     checkIfLocalCmFilesExist
-    if [ $? -eq 1 ]; then
+    if [ "$?" -eq 1 ]; then
         logInfo "Local configuration management files found, skipping fetch from version control."
         return
     else
@@ -1136,20 +1135,7 @@ function getMetaDataWithAutoDetect() {
 # --------------------------------------------------------------------------------
 function addInstanceLabel() {
 
-    local _labelName
-    local _labelValue
-    local _retainPrevious=$3
-
-    # if label value is not supplied, then assume default key name
-    # and use first parameter as key value
-    if [ -z "$2" ]; then
-        _labelName="cmbootstrap-status"
-        _labelValue="$1"
-    # otherwise use specified key name and value paid
-    else
-        _labelName="$1"
-        _labelValue="$2"
-    fi
+    local _labelName=$1
 
     if [ "$CM_DISABLE_LABELING" = "true" ]; then
         if [ -z "$cm_disable_labeling_reported" ]; then
@@ -1162,16 +1148,14 @@ function addInstanceLabel() {
     # detect Google Compute Engine instance
     checkGoogleComputeAvailable
     if [ $? -eq 0 ]; then
-        if [ $? -eq 0 ] && [ "$_retainPrevious" != "1" ] ; then
+        addInstanceLabelGoogleComputeEngine "$_labelName"
+        if [ $? -eq 0 ]; then
             # remove last label if recorded
             if [ ! -z "$last_instance_label_set"  ]; then
                 removeInstanceLabel "$last_instance_label_set"
             fi
             last_instance_label_set="$_labelName"
-        else
-            logInfo "Leaving previous $last_instance_label_set label in place."
         fi
-        addInstanceLabelGoogleComputeEngine "$_labelName" "$_labelValue"
     else
         if [ -z "$cm_labeling_unknown_platform_reported" ]; then
             logInfo "Unable to add instance label '$_labelName', unsupported platform."
@@ -1183,14 +1167,8 @@ function addInstanceLabel() {
 }
 function removeInstanceLabel() {
 
-    local _labelName
+    local _labelName=$1
     local _ignoreMissing=$2
-
-    if [ -z "$1" ]; then
-        _labelName="cmbootstrap-status"
-    else
-        _labelName="$1"
-    fi
 
     # detect Google Compute Engine instance
     checkGoogleComputeAvailable
@@ -1236,19 +1214,18 @@ function getMetaDataGoogleComputeEngine() {
 function addInstanceLabelGoogleComputeEngine() {
 
     local _labelName=$1
-    local _labelValue=$2
-    local _httpLog=$3
+    local _httpLog=$2
     local _zone
     local _gcloudParams
 
     getGoogleComputeEngineInstanceAndZone
-    logInfo "Adding Google Compute Engine label '$_labelName=$_labelValue' to instance '$gcp_instance_name' (zone '$gcp_zone')..."
+    logInfo "Adding Google Compute Engine label '$_labelName' to instance '$gcp_instance_name' (zone '$gcp_zone')..."
     if [ $? -ne 0 ]; then
         logInfo "Unable to retrieve Google Compute Engine instance and zone."
         return 1
     fi
 
-    _gcloudParams=( compute instances add-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName=$_labelValue" )
+    _gcloudParams=( compute instances add-labels "$gcp_instance_name" --zone="$gcp_zone" --labels="$_labelName=" )
 
     if [ "$_httpLog" = "1" ]; then
         _gcloudParams=( '--log-http' '--verbosity=debug' "${_gcloudParams[@]}" )
@@ -1263,7 +1240,7 @@ function addInstanceLabelGoogleComputeEngine() {
         # if labelling failed and gcloud debug option is enabled, retry with HTTP logging enabled to allow diagnosis
         if [ "$_httpLog" != "1" ] && [ "$CM_GCLOUD_DEBUG" = "true" ]; then
             logInfo "Retrying Google Compute Engine labelling with HTTP logging enabled..."
-            addInstanceLabelGoogleComputeEngine "$_labelName" "$_labelValue" '1'
+            addInstanceLabelGoogleComputeEngine "$_labelName" '1'
             return "$?"
         fi
         return 2
@@ -1400,7 +1377,7 @@ function getMetaDataOpenStack() {
 
     # retrieve OpenStack metadata JSON, this contains all the metadata in a single
     # response, so only need to retrieve if no previous attempt to retrieve
-    if [[ "$openStackMetaDataJsonRetrieved" -ne 1 ]]; then
+    if [[ "openStackMetaDataJsonRetrieved" -ne 1 ]]; then
         getOpenStackMetaDataJson
         openStackMetaDataJsonRetrieved=1
 	    openStackMetaDataJson="$json"
@@ -1478,11 +1455,11 @@ function getMetaDataAmazonEC2() {
     # first attempt to retrieve the metadata in the form of an AWS tag
     getAmazonEC2Tag "$_metaDataName"
     _exitCode=$?
-    if [ $_exitCode -eq 0 ] && [ ! -z "$ec2TagValue" ]; then
+    if [ "$_exitCode" -eq "0" ] && [ ! -z "$ec2TagValue" ]; then
         metaDataValue="$ec2TagValue"
         logInfo "Metadata $_metaDataName='$metaDataValue' retrieved from EC2 tag."
         return
-    elif [ $_exitCode -ne 0 ]; then
+    elif [ "$_exitCode" -ne "0" ]; then
         if [[ "$getAmazonEC2Tag_Error" -ne 1 ]]; then
             logInfo "Error retrieving metadata $_metaDataName from EC2 tag (error code $_exitCode)."
         fi
@@ -2060,31 +2037,6 @@ function windowsToUnixFormat {
 }
 
 
-# timing functions
-# --------------------------------------------------------------------------------
-function recordConfigStartTime() {
-    config_start_time=$(date +%s)
-}
-
-function recordConfigElapsedTime() {
-    config_end_time=$(date +%s)
-    config_elapsed_time_seconds=$((config_end_time - config_start_time))
-}
-function addElapsedTimeInstanceLabel() {
-    if [ ! -z "$config_elapsed_time_seconds" ]; then
-        addInstanceLabel 'cmbootstrap-config-time-seconds' "$config_elapsed_time_seconds" 1
-    fi
-}
-function removeElapsedTimeInstanceLabel() {
-    removeInstanceLabel 'cmbootstrap-config-time-seconds' 1
-}
-function logElapsedTimeInfo() {
-    if [ ! -z "$config_elapsed_time_seconds" ]; then
-        logInfo "Configuration took $config_elapsed_time_seconds seconds."
-    fi
-}
-
-
 # logging functions
 # --------------------------------------------------------------------------------
 function logInfo() {
@@ -2114,23 +2066,39 @@ function fatalError() {
     local _message=$1
     local _exit_code=$2
 
-    recordConfigElapsedTime
-    logElapsedTimeInfo
-
     _cleanup
 
-    addInstanceLabel 'failed'
-    addElapsedTimeInstanceLabel
-
     logError "$_message"
-    # if not in verbose, logError will have logged rather than echoed, so echo now
     if [ "$verbose_mode" -ne 1 ]; then
         echo "$_message"
     fi
-
+    addInstanceLabel 'cmbootstrap-failed'
     exit "$_exit_code"
 
 }
+
+
+# script compacting and escaping functions
+# --------------------------------------------------------------------------------
+
+# modify startup script by removing comments
+# and blank lines and reducing whitespace
+function createCompact() {
+
+    sed -e 's/^[[:space:]]*#[^#!].*$//' "$script_dir$0" | sed -E 's/[[:space:]]+/ /' | sed -E 's/^[[:space:]]+//' | sed -E 's/[[:space:]]+$//' | grep '\S' > "$script_dir$0.compact"
+    echo "'$script_dir$0' compacted to '$script_dir$0.compact'."
+}
+
+# modify startup script by escaping \\ to \, escaping "
+# to  \", and by replacing all new line characters with "\n"
+function createEscaped() {
+
+    createCompact
+
+    sed -e 's/\\/\\\\/g' "$script_dir$0.compact" | sed 's/\"/\\"/g' | sed -n -e 'H;${x;s/\n/\\n/g;p;}' > "$script_dir$0.escaped"
+
+}
+
 
 # main execution
 # --------------------------------------------------------------------------------
@@ -2138,24 +2106,22 @@ args=("$@")
 _configGeneral
 _configPath
 _init
-# remove elapsed time label that might have been set previously
-removeElapsedTimeInstanceLabel
-addInstanceLabel 'started'
+# remove any labels that might have been previously set before labeling as started
+removeInstanceLabel 'cmbootstrap-failed' 1
+removeInstanceLabel 'cmbootstrap-completed' 1
+removeInstanceLabel 'cmbootstrap-completed-previously' 1
+addInstanceLabel 'cmbootstrap-started'
 _retrieveMetaData
 _setStaticIpAddress
 _configVcs
 _configCm
 _configHostname
-addInstanceLabel 'installing'
+addInstanceLabel 'cmbootstrap-installing'
 _installPrerequisites
 _fetchFiles
-addInstanceLabel 'configuring'
-recordConfigStartTime
+addInstanceLabel 'cmbootstrap-configuring'
 _runInitFile
 _runMainFile
-recordConfigElapsedTime
-logElapsedTimeInfo
 _cleanup
-addInstanceLabel 'completed'
-addElapsedTimeInstanceLabel
+addInstanceLabel 'cmbootstrap-completed'
 logInfo "Finished."
