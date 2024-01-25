@@ -4,7 +4,7 @@
 ##
 ## Configuration management bootstrap script.
 ##
-## Version 1.2.94.
+## Version 1.2.95.
 ##
 ## Copyright Priocept Ltd.  All rights reserved.
 ##
@@ -1830,7 +1830,7 @@ function subversionOperation {
         _svn_params+=( --non-interactive )
         # if using SSL with invalid certificate on Subversion >=1.10, need to pass --trust-server-cert-failures argument
         if [[ "$_file" =~ ^https\:\/\/.* ]] && [ "$CM_VCS_ACCEPT_INVALID_SSL" = "true" ]; then
-            logInfo "Accepting invalid certificates with Subversion --trust-server-cert-failures option."
+            logInfo "Accepting invalid HTTPS certificates with Subversion --trust-server-cert-failures option."
             _svn_params+=('--trust-server-cert-failures=unknown-ca,cn-mismatch,expired,not-yet-valid,other')
         fi
         if [ "$verbose_mode" -eq 1 ]; then
@@ -1842,10 +1842,17 @@ function subversionOperation {
         # if using SSL with invalid certificate on Subversion < 1.10, need to run in interactive mode and pass 't' to accept invalid certificates
         logInfo "Subversion $_svn_version detected, invalid SSL certificates will be accepted using interactive mode."
         if [[ "$_file" =~ ^https\:\/\/.* ]] && [ "$CM_VCS_ACCEPT_INVALID_SSL" = "true" ]; then
+            logInfo "Accepting invalid HTTPS certificates with interactive Subversion command."
             if [ "$verbose_mode" -eq 1 ]; then
                 echo 't' | svn "$_svn_operation" -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
             else
                 echo 't' | svn "$_svn_operation" -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >/dev/null 2>&1
+            fi
+        else
+            if [ "$verbose_mode" -eq 1 ]; then
+                svn "$_svn_operation" -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file"
+            else
+                svn "$_svn_operation" -r "$CM_VCS_REVISION" "${_svn_params[@]}" "$_file" >/dev/null 2>&1
             fi
         fi
     fi
@@ -2138,6 +2145,9 @@ args=("$@")
 _configGeneral
 _configPath
 _init
+# record an initial start time so that elapsed time can be reported
+# in the event of a fatal error during initialisation
+recordConfigStartTime
 # remove elapsed time label that might have been set previously
 removeElapsedTimeInstanceLabel
 addInstanceLabel 'started'
@@ -2150,6 +2160,7 @@ addInstanceLabel 'installing'
 _installPrerequisites
 _fetchFiles
 addInstanceLabel 'configuring'
+# reset config start time to record only the duration of the actual configuration process
 recordConfigStartTime
 _runInitFile
 _runMainFile
